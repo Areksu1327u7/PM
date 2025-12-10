@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sistema de Inventario y Ventas</title>
+  <link rel="stylesheet" href="styles.css" />
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <h1>Gestión de Inventario y Ventas</h1>
+    <nav class="nav">
+      <button class="nav-btn" data-target="ingresoSection">Ingreso de Productos</button>
+      <button class="nav-btn" data-target="movSection">Movimientos (Senkata → Ceja)</button>
+      <button class="nav-btn" data-target="realizarVentaSection">Realizar Venta</button>
+      <button class="nav-btn" data-target="ventasHistSection">Historial Ventas</button>
+      <button class="nav-btn" data-target="inventarioSection">Inventario</button>
+      <button class="nav-btn" data-target="dashboardSection">Dashboard</button>
+      <button class="nav-btn" data-target="adminSection">Administrador</button>
+    </nav>
+  </header>
+    <!-- Movimientos entre depósitos -->
+    <section id="movSection" class="page-section" hidden>
+      <h2>Movimiento de Productos (SENKATA → CEJA)</h2>
+      <form id="formMov" class="card">
+        <div class="grid-3">
+          <label>Fecha
+            <input type="date" id="movFecha" required />
+          </label>
+          <label>Producto (ITEM / Nombre)
+            <input type="text" id="movItem" list="datalistMovItems" placeholder="SKU o nombre" required />
+            <datalist id="datalistMovItems"></datalist>
+          </label>
+          <label>Cantidad a mover
+            <input type="number" id="movCantidad" min="1" required />
+          </label>
+        </div>
+        <div class="actions">
+          <button type="submit" class="primary">Registrar Movimiento</button>
+          <button type="button" id="movLimpiar">Limpiar</button>
+        </div>
+        <p class="note">Se descuenta de SENKATA y se incrementa en CEJA.</p>
+      </form>
+
+      <div class="card">
+        <h3>Historial de Movimientos</h3>
+        <div class="table-wrap">
+          <table class="table" id="movTabla">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Tipo</th>
+                <th>ITEM</th>
+                <th>Nombre</th>
+                <th>Cantidad</th>
+                <th>Detalle</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  <main class="container">
+    <!-- Ingreso de productos con comprobante -->
+    <section id="ingresoSection" class="page-section">
+      <h2>Ingreso de Productos (Comprobante)</h2>
+      <form id="formIngreso" class="card">
+        <fieldset>
+          <legend>Datos del comprobante</legend>
+          <div class="grid-3">
+            <label>N° Comprobante
+              <input type="text" id="ingNum" placeholder="Ej: I-000123" required />
+            </label>
+            <label>Fecha
+              <input type="date" id="ingFecha" required />
+            </label>
+            <label>Proveedor
+              <input type="text" id="ingProveedor" placeholder="Nombre del proveedor" required />
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Productos</legend>
+          <div id="ingItems" class="items"></div>
+          <button type="button" class="secondary" id="ingAddItem">Agregar línea</button>
+          <hr />
+          <div class="grid-3">
+            <label>Subir CSV (ITEM,Nombre,CEJA,SENKATA,Unidad,Precio[,Categoria])
+              <input type="file" id="csvFile" accept=".csv,text/csv" />
+            </label>
+            <div>
+              <button type="button" id="csvPreviewBtn" class="secondary">Previsualizar CSV</button>
+              <button type="button" id="csvUploadBtn" class="primary">Subir a Base de Datos</button>
+            </div>
+            <div>
+              <small class="note">Si falta "Categoria" se usa "General". Unidad por defecto: PCS.</small>
+            </div>
+          </div>
+          <div class="table-wrap card" id="csvPreview" hidden>
+            <table class="table">
+              <thead><tr><th>ITEM</th><th>Nombre</th><th>CEJA</th><th>SENKATA</th><th>Unidad</th><th>Precio</th><th>Categoria</th><th>Estado</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </fieldset>
+
+        <div class="actions">
+          <button type="submit" class="primary">Guardar Ingreso</button>
+          <button type="button" id="ingLimpiar">Limpiar</button>
+          <button type="button" id="ingImprimir" disabled>Imprimir Comprobante</button>
+        </div>
+      </form>
+
+      <div id="ingresoComprobante" class="comprobante card" hidden>
+        <h3>Comprobante de Ingreso</h3>
+        <div id="ingresoComprobanteBody"></div>
+      </div>
+    </section>
+
+    <!-- Realizar Venta -->
+    <section id="realizarVentaSection" class="page-section" hidden>
+      <h2>Realizar Venta</h2>
+      <form id="formVenta" class="card">
+        <fieldset>
+          <legend>Datos del comprobante</legend>
+          <div class="grid-3">
+            <label>N° Comprobante
+              <input type="text" id="venNum" placeholder="Autogenerado" required />
+            </label>
+            <label>Fecha
+              <input type="date" id="venFecha" required />
+            </label>
+            <label>Cliente
+              <input type="text" id="venCliente" placeholder="Nombre del cliente" required />
+            </label>
+            <label>Descuento (%)
+              <input type="number" id="venDescPct" min="0" max="100" step="0.01" placeholder="0" />
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Productos</legend>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>ITEM</th>
+                  <th>Nombre</th>
+                  <th>Categoría</th>
+                  <th>CEJA disponible</th>
+                  <th>Cantidad</th>
+                  <th>Precio Venta (Bs)</th>
+                  <th>Acción</th>
+                </tr>
+              </thead>
+              <tbody id="venItems" class="items"></tbody>
+            </table>
+          </div>
+          <div class="grid-3" id="ventaTotals" style="margin-top:8px">
+            <div><strong>Subtotal:</strong> <span id="ventaSubtotal">Bs 0.00</span></div>
+            <div><strong>Descuento:</strong> <span id="ventaDescuento">Bs 0.00</span></div>
+            <div><strong>Total:</strong> <span id="ventaTotal">Bs 0.00</span></div>
+          </div>
+          <button type="button" class="secondary" id="venAddItem">Agregar línea</button>
+        </fieldset>
+        <div class="actions">
+          <button type="submit" class="primary">Guardar Venta</button>
+          <button type="button" id="venLimpiar">Limpiar</button>
+          <button type="button" id="venImprimir" disabled>Imprimir Comprobante</button>
+        </div>
+      </form>
+
+      <div id="ventaComprobante" class="comprobante card" hidden>
+        <h3>Comprobante de Venta</h3>
+        <div id="ventaComprobanteBody"></div>
+      </div>
+    </section>
+
+    <!-- Historial Ventas -->
+    <section id="ventasHistSection" class="page-section" hidden>
+      <h2>Historial de Ventas</h2>
+      <div class="card">
+        <div class="grid-3" style="margin-bottom:8px">
+          <label>Rango
+            <select id="ventasFiltroRango">
+              <option value="hoy">Hoy</option>
+              <option value="semana">Última semana</option>
+              <option value="mes">Últimos 30 días</option>
+              <option value="todo" selected>Todo</option>
+            </select>
+          </label>
+          <label>Desde
+            <input type="date" id="ventasFiltroDesde" />
+          </label>
+          <label>Hasta
+            <input type="date" id="ventasFiltroHasta" />
+          </label>
+        </div>
+        <div class="actions" style="margin-bottom:8px">
+          <button type="button" class="secondary" id="ventasFiltroAplicar">Aplicar filtros</button>
+          <button type="button" id="ventasFiltroLimpiar">Limpiar</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="ventasHistTabla">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>N°</th>
+                <th>Cliente</th>
+                <th>Subtotal (Bs)</th>
+                <th>Descuento (%)</th>
+                <th>Descuento (Bs)</th>
+                <th>Total (Bs)</th>
+                <th>Detalles</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    
+
+    <!-- Inventario con filtros -->
+    <section id="inventarioSection" class="page-section" hidden>
+      <h2>Inventario</h2>
+      <div class="card">
+        <div class="filters grid-5">
+          <label>Buscar (SKU / Nombre)
+            <input type="text" id="invBuscar" placeholder="Texto..." />
+          </label>
+          <label>Categoría
+            <select id="invCategoria">
+              <option value="">Todas</option>
+            </select>
+          </label>
+          <label>Stock mín.
+            <input type="number" id="invStockMin" min="0" />
+          </label>
+          <label>Stock máx.
+            <input type="number" id="invStockMax" min="0" />
+          </label>
+          <div class="filter-actions">
+            <button id="invAplicar" class="primary">Aplicar filtros</button>
+            <button id="invReiniciar">Reiniciar</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="table" id="invTabla">
+            <thead>
+              <tr>
+                <th>ITEM</th>
+                <th>Nombre</th>
+                <th>Categoría</th>
+                <th>CEJA</th>
+                <th>SENKATA</th>
+                <th>Unidad</th>
+                <th>Precio</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Dashboard con gráficos -->
+    <section id="dashboardSection" class="page-section" hidden>
+      <h2>Dashboard</h2>
+      <div class="grid-3">
+        <div class="card">
+          <h3>Stock por Categoría</h3>
+          <canvas id="chartStockPorCategoria"></canvas>
+        </div>
+        <div class="card">
+          <h3>Ingresos vs Ventas (por día)</h3>
+          <canvas id="chartMovimientos"></canvas>
+        </div>
+        <div class="card">
+          <h3>Top Productos por Stock</h3>
+          <canvas id="chartTopProductos"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- Administrador: matriz de accesos y roles -->
+    <section id="adminSection" class="page-section" hidden>
+      <h2>Administrador: Roles y Accesos</h2>
+      <div class="card">
+        <div class="grid-3 admin-controls">
+          <label>Nuevo rol
+            <input type="text" id="adminNuevoRol" placeholder="Nombre del rol" />
+          </label>
+          <button id="adminAgregarRol" class="secondary">Agregar rol</button>
+          <button id="adminGuardar" class="primary">Guardar matriz</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="adminTabla">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="note">Nota: de momento esta página está abierta a todos; la matriz no restringe acceso aún, solo documenta roles/permisos.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <small>© 2025 Plasticos Mauricio</small>
+  </footer>
+
+  <div id="printArea" hidden></div>
+
+  <!-- Supabase JS -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="app.js"></script>
+</body>
+</html>

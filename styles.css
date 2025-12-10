@@ -1,0 +1,118 @@
+/* Professional Celeste Theme */
+:root {
+  --blue-50: #eef5ff;
+  --blue-100: #dbe7ff;
+  --blue-300: #7aa7e1;
+  --blue-500: #3b82f6;
+  --blue-600: #0f63d6;
+  --blue-700: #0a6cff;
+  --ink-700: #0b3a77;
+  --ink-600: #1f3354;
+  --ink-500: #2b3e63;
+}
+
+html, body { font-family: "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--ink-600); }
+h1, h2, h3 { color: var(--ink-700); letter-spacing: .2px; }
+p { color: var(--ink-500); }
+.app-header { background: linear-gradient(90deg, #0a6cff, #0f63d6); color: white; padding: 18px; border-bottom: 1px solid rgba(255,255,255,0.25); }
+.app-header h1 { margin: 0 0 12px; font-size: 22px; letter-spacing: 0.2px; }
+.nav { display: flex; gap: 8px; flex-wrap: wrap; }
+.nav-btn { background: rgba(255,255,255,0.92); color: #0b3a77; border: 1px solid #7aa7e1; padding: 8px 14px; border-radius: 10px; cursor: pointer; font-weight: 600; backdrop-filter: blur(3px); }
+.nav-btn:hover { background: #eef5ff; border-color: #0a6cff; }
+
+.container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+.page-section { margin-bottom: 24px; }
+.page-section[hidden] { display: none !important; }
+.card { background: #fff; padding: 18px; border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,0.06); border: 1px solid #e5e7eb; margin-bottom: 16px; }
+
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: end; }
+.grid-5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; align-items: end; }
+.table-wrap { overflow-x: auto; overflow-y: hidden; }
+
+label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: #1f3354; }
+input[type="text"], input[type="date"], input[type="number"], select { padding: 10px 12px; border: 1px solid #c7d2fe; border-radius: 10px; background: #fff; outline: none; transition: box-shadow 0.15s ease, border-color 0.15s ease; }
+input:focus, select:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.2); }
+
+.items { display: table-row-group; }
+.items td { white-space: nowrap; }
+.items input[type="text"], .items input[type="number"], .items select { width: 100%; }
+.items .ven-ceja { max-width: 120px; }
+.items .ven-cant { max-width: 110px; }
+.items .ven-pvent { max-width: 140px; }
+.items .remove { white-space: nowrap; }
+
+.actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+button { padding: 10px 16px; border-radius: 10px; border: 1px solid #cbd5e1; background: #fff; cursor: pointer; font-weight: 600; color: #0b3a77; }
+button.primary { background: #0a6cff; color: #fff; border-color: #0a6cff; }
+button.secondary { background: #eef5ff; color: #0b3a77; border-color: #7aa7e1; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { border-bottom: 1px solid #e5e7eb; padding: 10px; text-align: left; font-size: 14px; }
+.table th { background: #eef5ff; white-space: nowrap; font-weight: 700; color: #0b3a77; }
+.table tbody tr:hover { background: #f9fafb; }
+
+.note { font-size: 12px; color: #5b6a85; }
+.app-footer { text-align: center; padding: 24px; color: #5b6a85; }
+
+/* Comprobante visual */
+.comprobante h3 { margin-top: 0; }
+.comprobante .header { display: flex; justify-content: space-between; gap: 12px; }
+.comprobante table { width: 100%; border-collapse: collapse; }
+.comprobante th, .comprobante td { border: 1px solid #ddd; padding: 10px; }
+.comprobante tfoot td { font-weight: 700; }
+
+/* Totals bar */
+#ventaTotals { background: #f3f7ff; border: 1px solid #dbe7ff; border-radius: 10px; padding: 10px; }
+
+/* Print only the comprobante */
+@media print {
+  body * { visibility: hidden; }
+  #printArea, #printArea * { visibility: visible; }
+  #printArea { position: absolute; left: 0; right: 0; top: 0; }
+}
+.container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+.page-section { margin-bottom: 24px; }
+.page-section[hidden] { display: none !important; }
+.card { background: #fff; padding: 16px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 16px; }
+
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.grid-5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; align-items: end; }
+.table-wrap { overflow-x: auto; overflow-y: hidden; }
+
+label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+input[type="text"], input[type="date"], input[type="number"], select { padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+
+.items { display: table-row-group; }
+.items td { white-space: nowrap; }
+.items input[type="text"], .items input[type="number"], .items select { width: 100%; }
+.items .ven-ceja { max-width: 120px; }
+.items .ven-cant { max-width: 100px; }
+.items .ven-pvent { max-width: 120px; }
+.items .remove { white-space: nowrap; }
+
+.actions { display: flex; gap: 8px; margin-top: 12px; }
+button { padding: 10px 14px; border-radius: 8px; border: 1px solid #cbd5e1; background: #fff; cursor: pointer; color: #0b3a77; }
+button.primary { background: #0a6cff; color: #fff; border-color: #0a6cff; }
+button.secondary { background: #eef5ff; color: #0b3a77; border-color: #7aa7e1; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { border-bottom: 1px solid #e5e7eb; padding: 8px; text-align: left; font-size: 14px; }
+.table th { background: #eef5ff; white-space: nowrap; color: #0b3a77; }
+
+.note { font-size: 12px; color: #5b6a85; }
+.app-footer { text-align: center; padding: 24px; color: #5b6a85; }
+
+/* Comprobante visual */
+.comprobante h3 { margin-top: 0; }
+.comprobante .header { display: flex; justify-content: space-between; }
+.comprobante table { width: 100%; border-collapse: collapse; }
+.comprobante th, .comprobante td { border: 1px solid #ddd; padding: 8px; }
+
+/* Print only the comprobante */
+@media print {
+  body * { visibility: hidden; }
+  #printArea, #printArea * { visibility: visible; }
+  #printArea { position: absolute; left: 0; right: 0; top: 0; }
+}
