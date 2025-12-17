@@ -819,10 +819,66 @@ async function refreshDashboard() {
 // Movimientos UI
 const formMov = document.getElementById('formMov');
 const movFecha = document.getElementById('movFecha');
-const movItem = document.getElementById('movItem');
-const movCantidad = document.getElementById('movCantidad');
+const movAddItemBtn = document.getElementById('movAddItem');
+const movItemsTbody = document.getElementById('movItems');
 const movLimpiar = document.getElementById('movLimpiar');
 const movTablaBody = document.getElementById('movTabla')?.querySelector('tbody');
+
+function newMovRow() {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input type="text" class="mov-item" list="datalistMovItems" placeholder="SKU o nombre" /></td>
+    <td class="mov-nombre">-</td>
+    <td class="mov-senk">0</td>
+    <td><input type="number" class="mov-cant" min="1" value="" /></td>
+    <td><button type="button" class="remove">✕</button></td>
+  `;
+  const itemInput = tr.querySelector('.mov-item');
+  const nombreCell = tr.querySelector('.mov-nombre');
+  const senkCell = tr.querySelector('.mov-senk');
+  const cantInput = tr.querySelector('.mov-cant');
+  const removeBtn = tr.querySelector('.remove');
+
+  async function resolveProduct() {
+    const val = (itemInput.value || '').trim();
+    if (!val) { nombreCell.textContent = '-'; senkCell.textContent = '0'; cantInput.value = ''; cantInput.removeAttribute('max'); tr.dataset.item = ''; return; }
+    let p = await findProductByITEM(val);
+    if (!p) {
+      const all = await allProducts();
+      const byName = all.filter(x => (x.nombre || '').toLowerCase() === val.toLowerCase());
+      if (byName.length === 1) p = byName[0];
+    }
+    if (p) {
+      tr.dataset.item = p.item;
+      nombreCell.textContent = p.nombre || '';
+      senkCell.textContent = String(p.senkata || 0);
+      cantInput.value = '';
+      cantInput.setAttribute('max', String(p.senkata || 0));
+    } else {
+      tr.dataset.item = '';
+      nombreCell.textContent = 'No encontrado';
+      senkCell.textContent = '0';
+      cantInput.value = '';
+      cantInput.removeAttribute('max');
+    }
+  }
+  itemInput.addEventListener('change', resolveProduct);
+  itemInput.addEventListener('blur', resolveProduct);
+  itemInput.addEventListener('input', () => { nombreCell.textContent = '-'; senkCell.textContent = '0'; tr.dataset.item=''; });
+  cantInput.addEventListener('input', () => {
+    const max = parseInt(cantInput.getAttribute('max') || '0', 10);
+    let v = parseInt(cantInput.value || '0', 10);
+    if (max && v > max) { cantInput.value = String(max); }
+    if (v < 0) { cantInput.value = '0'; }
+  });
+  removeBtn.addEventListener('click', () => {
+    tr.remove();
+    if (movItemsTbody && movItemsTbody.children.length === 0) {
+      movItemsTbody.appendChild(newMovRow());
+    }
+  });
+  return tr;
+}
 
 async function refreshMovDatalist() {
   const list = await allProducts();
@@ -849,20 +905,33 @@ async function refreshMovimientosTable() {
 formMov?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const fecha = movFecha.value;
-  const item = movItem.value.trim();
-  const cantidad = parseInt(movCantidad.value || '0', 10);
-  if (!fecha || !item || cantidad <= 0) { alert('Complete los campos'); return; }
-  const p = await findProductByITEM(item);
-  if (!p) { alert('Producto no encontrado'); return; }
-  if ((p.senkata || 0) < cantidad) { alert(`SENKATA insuficiente (Disp: ${p.senkata})`); return; }
-  await upsertProduct({ id: p.id, item: p.item, nombre: p.nombre, categoria: p.categoria, unidad: p.unidad || 'PCS', precio: p.precio || 0, ceja: (p.ceja || 0) + cantidad, senkata: (p.senkata || 0) - cantidad });
-  await addMovement({ tipo: 'transfer', fecha, item: p.item, nombre: p.nombre, cantidad, detalle: 'SENKATA → CEJA', total: 0, descuento: 0 });
+  if (!fecha) { alert('Seleccione la fecha'); return; }
+  const rows = Array.from(movItemsTbody?.querySelectorAll('tr') || []);
+  if (!rows.length) { alert('Agregue al menos una línea'); return; }
+  let processed = 0;
+  for (const tr of rows) {
+    const item = tr.dataset.item || (tr.querySelector('.mov-item')?.value || '').trim();
+    const cant = parseInt(tr.querySelector('.mov-cant')?.value || '0', 10);
+    if (!item || cant <= 0) continue;
+    const p = await findProductByITEM(item);
+    if (!p) { alert(`Producto no encontrado: ${item}`); continue; }
+    if ((p.senkata || 0) < cant) { alert(`SENKATA insuficiente para ${p.item} (${p.nombre}). Disp: ${p.senkata}`); continue; }
+    await upsertProduct({ id: p.id, item: p.item, nombre: p.nombre, categoria: p.categoria, unidad: p.unidad || 'PCS', precio: p.precio || 0, ceja: (p.ceja || 0) + cant, senkata: (p.senkata || 0) - cant });
+    await addMovement({ tipo: 'transfer', fecha, item: p.item, nombre: p.nombre, cantidad: cant, detalle: 'SENKATA → CEJA', total: 0, descuento: 0 });
+    processed++;
+  }
   await refreshInventoryUI();
   await refreshMovimientosTable();
-  alert('Movimiento registrado');
+  if (processed > 0) {
+    alert(`Movimientos registrados: ${processed}`);
+    movItemsTbody.innerHTML = '';
+    movItemsTbody.appendChild(newMovRow());
+  } else {
+    alert('No se registró ningún movimiento.');
+  }
 });
 
-movLimpiar?.addEventListener('click', () => { formMov.reset(); });
+movLimpiar?.addEventListener('click', () => { formMov.reset(); if (movItemsTbody){ movItemsTbody.innerHTML=''; movItemsTbody.appendChild(newMovRow()); } });
 
 // Inicialización
 (async () => {
@@ -872,4 +941,10 @@ movLimpiar?.addEventListener('click', () => { formMov.reset(); });
   await refreshMovDatalist();
   await refreshMovimientosTable();
   await refreshVentasHistorial();
+  if (movItemsTbody && movItemsTbody.children.length === 0) {
+    movItemsTbody.appendChild(newMovRow());
+  }
+  movAddItemBtn?.addEventListener('click', () => {
+    movItemsTbody.appendChild(newMovRow());
+  });
 })();

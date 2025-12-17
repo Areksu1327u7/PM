@@ -1,16 +1,22 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sistema de Inventario y Ventas</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestión de Inventario</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css" />
   <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
   <header class="app-header">
-    <h1>Gestión de Inventario y Ventas</h1>
+    <div class="header-row">
+      <h1>Gestión de Inventario</h1>
+      <button id="themeToggle" class="nav-btn" title="Cambiar tema">Modo oscuro</button>
+    </div>
     <nav class="nav">
       <button class="nav-btn" data-target="ingresoSection">Ingreso de Productos</button>
       <button class="nav-btn" data-target="movSection">Movimientos (Senkata → Ceja)</button>
@@ -29,18 +35,30 @@
           <label>Fecha
             <input type="date" id="movFecha" required />
           </label>
-          <label>Producto (ITEM / Nombre)
-            <input type="text" id="movItem" list="datalistMovItems" placeholder="SKU o nombre" required />
-            <datalist id="datalistMovItems"></datalist>
-          </label>
-          <label>Cantidad a mover
-            <input type="number" id="movCantidad" min="1" required />
-          </label>
+          <div></div>
+          <div class="actions" style="justify-content:flex-end;">
+            <button type="button" id="movAddItem" class="secondary">Agregar línea</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>ITEM</th>
+                <th>Nombre</th>
+                <th>SENKATA</th>
+                <th>Cantidad</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="movItems" class="items"></tbody>
+          </table>
         </div>
         <div class="actions">
           <button type="submit" class="primary">Registrar Movimiento</button>
           <button type="button" id="movLimpiar">Limpiar</button>
         </div>
+        <datalist id="datalistMovItems"></datalist>
         <p class="note">Se descuenta de SENKATA y se incrementa en CEJA.</p>
       </form>
 
