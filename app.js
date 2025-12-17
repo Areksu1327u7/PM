@@ -948,4 +948,3 @@ movLimpiar?.addEventListener('click', () => { formMov.reset(); if (movItemsTbody
     movItemsTbody.appendChild(newMovRow());
   });
 })();
-//modificacion que debe verse por favor, este es mi intento final
