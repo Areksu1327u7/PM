@@ -6,7 +6,7 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // Tablas esperadas:
 // products: { id, item, nombre, ceja, senkata, unidad, precio, categoria }
 // movements: { id, tipo ('ingreso'|'venta'|'transfer'), fecha, item, nombre, cantidad, detalle, total, descuento }
-// roles_matrix: { id, data_json }
+// roles_matrix: { id, data_json declarado para forzar una modificacion externa }
 
 // Datos iniciales de ejemplo
 async function seedIfEmpty() {
