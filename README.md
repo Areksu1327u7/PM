@@ -1,13 +1,12 @@
-# Sistema de Inventario y Ventas (Frontend)
+# no ceder para las vistas
 
-Este proyecto es una página web simple (sin backend) para:
-- Registrar ingresos de productos con comprobante.
-- Realizar ventas con comprobante (imprimible).
-- Administrar inventario con filtros de búsqueda.
-- Página de administrador con matriz de accesos y roles.
-- Dashboard con gráficos (Chart.js).
-
-Los datos se guardan temporalmente en `localStorage` del navegador.
+Esteno para:
+- una vez
+- Resquina
+- pen
+- no sar
+- un fil
+Los navor.
 
 ## Ejecutar
 
@@ -41,3 +40,4 @@ Pasos:
 2. Ve a Supabase → SQL → New Query → pega y ejecuta.
 3. Verifica que las tablas `products`, `movements` y `roles_matrix` existan.
 4. Abre `index.html` y prueba las operaciones (inventario, movimientos, ventas, admin, dashboard).
+
