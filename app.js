@@ -1,7 +1,7 @@
 // Conexión Supabase
 const SUPABASE_URL = 'https://qmaftwvpbzzzdmuevelh.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtYWZ0d3ZwYnp6emRtdWV2ZWxoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5NjA2NTYsImV4cCI6MjA4MDUzNjY1Nn0.dEQkkAWdwAEGDhqSPcQuuBKSwMlmVQk9J2ws6eU7ti4';
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // Tablas esperadas:
 // products: { id, item, nombre, ceja, senkata, unidad, precio, categoria }
@@ -948,3 +948,4 @@ movLimpiar?.addEventListener('click', () => { formMov.reset(); if (movItemsTbody
     movItemsTbody.appendChild(newMovRow());
   });
 })();
+
