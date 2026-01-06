@@ -351,22 +351,43 @@ function renderComprobante(tipo, mov, targetBody, container) {
       return `<tr><td>${it.item ?? it.sku ?? ''}</td><td>${it.nombre}</td><td>${it.cantidad}</td><td>${fmt(it.precioVenta)}</td><td>${fmt(subtotal)}</td></tr>`;
     }
   }).join('');
+
+  const tipoLabel = esIngreso ? 'Comprobante de Ingreso' : 'Comprobante de Venta';
+  const entidadLabel = esIngreso ? 'Proveedor' : 'Cliente';
+
   targetBody.innerHTML = `
-    <div class="header">
-      <div>
-        <div><strong>N°:</strong> ${mov.comprobante.numero}</div>
-        <div><strong>Fecha:</strong> ${mov.comprobante.fecha}</div>
+    <div class="comprobante-doc">
+      <div class="comp-brand">
+        <div class="brand-left">
+          <div class="brand-title">IMPORTACIONES MB</div>
+          <div class="brand-sub">${tipoLabel}</div>
+        </div>
+        <div class="brand-right">
+          <div><strong>N°:</strong> ${mov.comprobante.numero}</div>
+          <div><strong>Fecha:</strong> ${mov.comprobante.fecha}</div>
+        </div>
       </div>
-      <div>
-        <div><strong>${esIngreso ? 'Proveedor' : 'Cliente'}:</strong> ${mov.comprobante.entidad}</div>
+
+      <div class="comp-meta">
+        <div><strong>${entidadLabel}:</strong> ${mov.comprobante.entidad}</div>
         <div><strong>Tipo:</strong> ${esIngreso ? 'Ingreso' : 'Venta'}</div>
       </div>
+
+      <table class="comp-table">
+        <thead><tr>${cols}</tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr>
+            <td colspan="${esIngreso ? 5 : 4}" class="comp-total-label">Total</td>
+            <td class="comp-total-value">${fmt(mov.total)}</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <div class="comp-footer">
+        <div class="comp-note">Gracias por su preferencia.</div>
+      </div>
     </div>
-    <table>
-      <thead><tr>${cols}</tr></thead>
-      <tbody>${rows}</tbody>
-      <tfoot><tr><td colspan="${esIngreso ? 5 : 4}" style="text-align:right"><strong>Total</strong></td><td>${fmt(mov.total)}</td></tr></tfoot>
-    </table>
   `;
   container.hidden = false;
 }

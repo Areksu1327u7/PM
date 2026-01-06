@@ -86,6 +86,20 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .comprobante th, .comprobante td { border: 1px solid #ddd; padding: 10px; }
 .comprobante tfoot td { font-weight: 700; }
 
+/* Professional comprobante document */
+.comprobante-doc { background: #fff; padding: 14px; border: 1px solid var(--border); border-radius: 12px; }
+.comp-brand { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 10px; border-bottom: 2px solid var(--blue-100); margin-bottom: 10px; }
+.brand-title { font-size: 20px; font-weight: 800; letter-spacing: 0.5px; color: var(--ink-700); }
+.brand-sub { font-size: 13px; color: var(--ink-500); }
+.comp-meta { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 10px 0 14px; }
+.comp-table { width: 100%; border-collapse: collapse; }
+.comp-table th { background: var(--blue-50); border: 1px solid var(--blue-100); padding: 8px; color: var(--ink-700); font-weight: 700; }
+.comp-table td { border: 1px solid var(--border); padding: 8px; }
+.comp-total-label { text-align: right; font-weight: 700; }
+.comp-total-value { font-weight: 800; color: var(--ink-700); }
+.comp-footer { margin-top: 12px; display: flex; justify-content: space-between; color: var(--ink-500); font-size: 12px; }
+.comp-note { font-style: italic; }
+
 /* Totals bar */
 #ventaTotals { background: var(--blue-50); border: 1px solid var(--blue-100); border-radius: 10px; padding: 10px; }
 
@@ -94,6 +108,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   body * { visibility: hidden; }
   #printArea, #printArea * { visibility: visible; }
   #printArea { position: absolute; left: 0; right: 0; top: 0; }
+  .comprobante-doc { box-shadow: none; border-radius: 0; border: none; }
 }
 .container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
 .page-section { margin-bottom: 24px; }
@@ -134,9 +149,24 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .comprobante table { width: 100%; border-collapse: collapse; }
 .comprobante th, .comprobante td { border: 1px solid #ddd; padding: 8px; }
 
+/* Professional comprobante document (dup for lower block) */
+.comprobante-doc { background: #fff; padding: 14px; border: 1px solid #e5e7eb; border-radius: 12px; }
+.comp-brand { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 8px; border-bottom: 2px solid #e5e7eb; margin-bottom: 10px; }
+.brand-title { font-size: 20px; font-weight: 800; letter-spacing: 0.5px; color: #0b3a77; }
+.brand-sub { font-size: 13px; color: #5b6a85; }
+.comp-meta { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 10px 0 14px; }
+.comp-table { width: 100%; border-collapse: collapse; }
+.comp-table th { background: #eef5ff; border: 1px solid #cbd5e1; padding: 8px; color: #0b3a77; font-weight: 700; }
+.comp-table td { border: 1px solid #e5e7eb; padding: 8px; }
+.comp-total-label { text-align: right; font-weight: 700; }
+.comp-total-value { font-weight: 800; color: #0b3a77; }
+.comp-footer { margin-top: 12px; display: flex; justify-content: space-between; color: #5b6a85; font-size: 12px; }
+.comp-note { font-style: italic; }
+
 /* Print only the comprobante */
 @media print {
   body * { visibility: hidden; }
   #printArea, #printArea * { visibility: visible; }
   #printArea { position: absolute; left: 0; right: 0; top: 0; }
+  .comprobante-doc { box-shadow: none; border-radius: 0; border: none; }
 }
