@@ -338,6 +338,23 @@
 
   <div id="printArea" hidden></div>
 
+  <!-- Modal: Detalles de Venta -->
+  <div id="ventaDetallesModal" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Detalles de Venta</h3>
+        <button type="button" class="modal-close" aria-label="Cerrar">✕</button>
+      </div>
+      <div id="ventaDetallesBody" class="modal-body"></div>
+      <div class="modal-footer">
+        <button type="button" id="ventaDetallesReimprimir" class="secondary">Reimprimir comprobante</button>
+        <button type="button" id="ventaDetallesPDF" class="secondary">Descargar PDF</button>
+        <button type="button" id="ventaDetallesAnular" class="btn-danger">Anular venta</button>
+        <button type="button" class="primary modal-close">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Supabase JS -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>

@@ -723,10 +723,135 @@ async function refreshVentasHistorial() {
 async function onVerDetallesVenta(e) {
   const saleId = e.currentTarget.dataset.saleId;
   try {
+    const { data: sale, error: saleErr } = await supabase.from('sales').select('*').eq('id', saleId).maybeSingle();
     const { data, error } = await supabase.from('sales_items').select('*').eq('sale_id', saleId).order('id', { ascending: true });
-    if (error) { alert('Error cargando detalles'); return; }
-    const lines = (data||[]).map(it => `${it.item} - ${it.nombre} | Cant: ${it.cantidad} | Precio: ${fmt(it.precio)} | Subtotal: ${fmt(it.subtotal)}`).join('\n');
-    alert(lines || 'Sin items');
+    if (saleErr || error) { alert('Error cargando detalles'); return; }
+    // Detect if already annulled via movements record
+    let isAnulada = false;
+    try {
+      const { data: ann } = await supabase.from('movements').select('id').eq('detalle', `Anulación comprobante ${sale?.numero || ''}`).limit(1);
+      isAnulada = Array.isArray(ann) && ann.length > 0;
+    } catch {}
+
+    const modal = document.getElementById('ventaDetallesModal');
+    const body = document.getElementById('ventaDetallesBody');
+    const rows = (data||[]).map(it => `
+      <tr>
+        <td>${it.item}</td>
+        <td>${it.nombre}</td>
+        <td style="text-align:right">${it.cantidad}</td>
+        <td style="text-align:right">${fmt(it.precio)}</td>
+        <td style="text-align:right">${fmt(it.subtotal)}</td>
+      </tr>
+    `).join('');
+    const subtotal = sale?.subtotal ?? (data||[]).reduce((a,i)=>a+(i.subtotal||0),0);
+    const descuentoPct = sale?.descuento_pct || 0;
+    const descuentoBs = sale?.descuento || (subtotal * descuentoPct/100);
+    const total = sale?.total ?? (subtotal - descuentoBs);
+
+    body.innerHTML = `
+      <div class="sale-meta">
+        <div><strong>N°:</strong> ${sale?.numero || '-'}</div>
+        <div><strong>Fecha:</strong> ${sale?.fecha || '-'}</div>
+        <div><strong>Cliente:</strong> ${sale?.cliente || '-'}</div>
+        <div style="grid-column: 1 / -1"><strong>Estado:</strong> ${isAnulada ? '<span style="color:#991b1b;font-weight:700">ANULADA</span>' : '<span style="color:#0b3a77;font-weight:700">VIGENTE</span>'}</div>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>ITEM</th><th>Nombre</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr>
+          </thead>
+          <tbody>${rows || '<tr><td colspan="5">Sin items</td></tr>'}</tbody>
+        </table>
+      </div>
+      <div class="sale-totals">
+        <div>Subtotal: ${fmt(subtotal)}</div>
+        <div>Descuento: ${Number(descuentoPct).toFixed(2)}% (${fmt(descuentoBs)})</div>
+        <div>Total: ${fmt(total)}</div>
+      </div>
+    `;
+    // open modal
+    modal.hidden = false;
+    const closes = modal.querySelectorAll('.modal-close');
+    closes.forEach(btn => btn.onclick = () => { modal.hidden = true; });
+    // center and enable dragging
+    const card = modal.querySelector('.modal-card');
+    const header = modal.querySelector('.modal-header');
+    card.style.left = '50%';
+    card.style.top = '50%';
+    card.style.transform = 'translate(-50%, -50%)';
+    let isDragging = false;
+    let offsetX = 0, offsetY = 0;
+    function onMouseMove(ev) {
+      if (!isDragging) return;
+      card.style.left = `${ev.clientX - offsetX}px`;
+      card.style.top = `${ev.clientY - offsetY}px`;
+      card.style.transform = 'none';
+    }
+    function onMouseUp() {
+      if (!isDragging) return;
+      isDragging = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    }
+    header.onmousedown = (ev) => {
+      const rect = card.getBoundingClientRect();
+      isDragging = true;
+      offsetX = ev.clientX - rect.left;
+      offsetY = ev.clientY - rect.top;
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+      ev.preventDefault();
+    };
+    // actions
+    const reimpBtn = document.getElementById('ventaDetallesReimprimir');
+    const pdfBtn = document.getElementById('ventaDetallesPDF');
+    const anularBtn = document.getElementById('ventaDetallesAnular');
+    // Reset button states each time modal opens
+    if (reimpBtn) reimpBtn.disabled = false;
+    if (pdfBtn) pdfBtn.disabled = false;
+    if (anularBtn) { anularBtn.disabled = false; anularBtn.textContent = 'Anular venta'; }
+    if (isAnulada) {
+      if (reimpBtn) reimpBtn.disabled = true;
+      if (pdfBtn) pdfBtn.disabled = true;
+      if (anularBtn) { anularBtn.disabled = true; anularBtn.textContent = 'Venta anulada'; }
+    }
+    reimpBtn.onclick = async () => {
+      try {
+        const mov = { comprobante: { numero: sale.numero, fecha: sale.fecha, entidad: sale.cliente }, items: data.map(di => ({ item: di.item, nombre: di.nombre, cantidad: di.cantidad, precioVenta: di.precio })), total: total };
+        const tempContainer = document.createElement('div');
+        renderComprobante('venta', mov, tempContainer, tempContainer);
+        printComprobante(tempContainer);
+      } catch (e) { console.error('reimprimir error', e); alert('No se pudo reimprimir.'); }
+    };
+    pdfBtn.onclick = async () => {
+      try {
+        const mov = { comprobante: { numero: sale.numero, fecha: sale.fecha, entidad: sale.cliente }, items: data.map(di => ({ item: di.item, nombre: di.nombre, cantidad: di.cantidad, precioVenta: di.precio })), total: total };
+        setLastComprobante('venta', mov);
+        await descargarComprobantePDF('venta');
+      } catch (e) { console.error('pdf error', e); alert('No se pudo generar el PDF.'); }
+    };
+    anularBtn.onclick = async () => {
+      if (!confirm('¿Seguro que desea anular esta venta? Se revertirá el stock.')) return;
+      try {
+        const products = await allProducts();
+        for (const it of data) {
+          const p = products.find(x => (x.item||'').toLowerCase() === (it.item||'').toLowerCase());
+          if (p) {
+            await upsertProduct({ id: p.id, item: p.item, nombre: p.nombre, categoria: p.categoria, unidad: p.unidad, precio: p.precio, ceja: (p.ceja||0) + (it.cantidad||0), senkata: p.senkata||0 });
+          }
+        }
+        try { await supabase.from('sales').update({ estado: 'anulada' }).eq('id', saleId); } catch {}
+        await addMovement({ tipo: 'venta', fecha: sale.fecha, item: '-', nombre: sale.cliente + ' (ANULADA)', cantidad: data.reduce((a,i)=>a+(i.cantidad||0),0), detalle: `Anulación comprobante ${sale.numero}`, total: 0, descuento: 0 });
+        modal.hidden = true;
+        await refreshInventoryUI();
+        await refreshVentasHistorial();
+        alert('Venta anulada y stock revertido.');
+      } catch (e) { console.error('anular error', e); alert('No se pudo anular la venta.'); }
+    };
+    // backdrop and esc
+    modal.onclick = (ev) => { if (ev.target === modal) modal.hidden = true; };
+    document.addEventListener('keydown', function escClose(ev){ if (ev.key==='Escape'){ modal.hidden=true; document.removeEventListener('keydown', escClose); } });
   } catch (err) { console.error('ver detalles error', err); }
 }
 

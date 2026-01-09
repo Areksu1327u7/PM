@@ -1,10 +1,4 @@
-# Sistema de Inventario y Ventas (Frontend)
-
-Este proyecto es una página web simple (sin backend) para:
-- Registrar ingresos de productos con comprobante.
-- Realizar ventas con comprobante (imprimible).
-- Administrar inventario con filtros de búsqueda.
-- Página de administrador con matriz de accesos y roles.
+# no es nada
 - Dashboard con gráficos (Chart.js).
 
 Los datos se guardan temporalmente en `localStorage` del navegador.
