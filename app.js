@@ -326,9 +326,15 @@ venLimpiarBtn.addEventListener('click', async () => {
   recalcVentaTotals();
 });
 
-// Imprimir
-ingImprimirBtn.addEventListener('click', () => printComprobante(ingresoComprobanteBody));
-venImprimirBtn.addEventListener('click', () => printComprobante(ventaComprobanteBody));
+// Imprimir (redirigido a PDF para evitar URL del navegador)
+ingImprimirBtn.addEventListener('click', async () => {
+  try { await descargarComprobantePDF('ingreso', { autoPrint: true }); } catch (e) { console.error(e); alert('No se pudo imprimir el comprobante.'); }
+});
+venImprimirBtn.addEventListener('click', async () => {
+  try { await descargarComprobantePDF('venta', { autoPrint: true }); } catch (e) { console.error(e); alert('No se pudo imprimir el comprobante.'); }
+});
+
+// Compatibilidad: impresión HTML (ya no utilizada por defecto)
 function printComprobante(sourceEl) {
   const printArea = document.getElementById('printArea');
   printArea.innerHTML = sourceEl.innerHTML;
@@ -390,6 +396,7 @@ function renderComprobante(tipo, mov, targetBody, container) {
     </div>
   `;
   container.hidden = false;
+  try { setLastComprobante(tipo, mov); } catch {}
 }
 function fmt(n) { return `Bs ${Number(n).toFixed(2)}`; }
 
@@ -401,6 +408,91 @@ function setVentaTotals(sub, desc, tot) {
   if (ventaSubtotalEl) ventaSubtotalEl.textContent = fmt(sub);
   if (ventaDescuentoEl) ventaDescuentoEl.textContent = fmt(desc);
   if (ventaTotalEl) ventaTotalEl.textContent = fmt(tot);
+}
+
+// ===== PDF helpers (jsPDF) =====
+let lastComprobante = null;
+function setLastComprobante(tipo, mov) {
+  lastComprobante = { tipo, mov };
+}
+
+async function descargarComprobantePDF(tipo, options = {}) {
+  try {
+    const payload = lastComprobante && lastComprobante.tipo === tipo ? lastComprobante.mov : null;
+    if (!payload) { alert('No hay comprobante disponible para exportar.'); return; }
+    const esIngreso = tipo === 'ingreso';
+    const jspdfNS = window.jspdf || {};
+    const jsPDF = jspdfNS.jsPDF;
+    if (!jsPDF || !window.jspdf) { alert('Generador PDF no disponible.'); return; }
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    let y = 40;
+    // Marca
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.text('IMPORTACIONES MB', 40, y); y += 18;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.text(esIngreso ? 'Comprobante de Ingreso' : 'Comprobante de Venta', 40, y);
+    // Meta
+    const metaRight = [
+      `N°: ${payload.comprobante.numero}`,
+      `Fecha: ${payload.comprobante.fecha}`
+    ];
+    metaRight.forEach((t, i) => {
+      doc.text(t, pageWidth - 40, 40 + (i * 14), { align: 'right' });
+    });
+    y += 18;
+    // Entidad
+    doc.setFont('helvetica', 'bold'); doc.text(esIngreso ? 'Proveedor:' : 'Cliente:', 40, y);
+    doc.setFont('helvetica', 'normal'); doc.text(String(payload.comprobante.entidad || '-'), 110, y); y += 12;
+    doc.setFont('helvetica', 'bold'); doc.text('Tipo:', 40, y);
+    doc.setFont('helvetica', 'normal'); doc.text(esIngreso ? 'Ingreso' : 'Venta', 80, y); y += 10;
+
+    // Tabla
+    const head = esIngreso
+      ? [[ 'SKU','Nombre','Categoría','Cantidad','Precio Compra','Subtotal' ]]
+      : [[ 'SKU','Nombre','Cantidad','Precio Venta','Subtotal' ]];
+    const body = payload.items.map(it => {
+      if (esIngreso) {
+        const subtotal = (it.precioCompra || 0) * (it.cantidad || 0);
+        return [ it.sku || '', it.nombre || '', it.categoria || '', it.cantidad || 0, (it.precioCompra || 0).toFixed(2), subtotal.toFixed(2) ];
+      } else {
+        const subtotal = (it.precioVenta || 0) * (it.cantidad || 0);
+        return [ it.item || it.sku || '', it.nombre || '', it.cantidad || 0, (it.precioVenta || 0).toFixed(2), subtotal.toFixed(2) ];
+      }
+    });
+    const autoTableAvailable = typeof doc.autoTable === 'function';
+    if (!autoTableAvailable) { alert('Módulo AutoTable no disponible.'); return; }
+    doc.autoTable({
+      head,
+      body,
+      startY: y + 10,
+      styles: { font: 'helvetica', fontSize: 10, cellPadding: 6 },
+      headStyles: { fillColor: [238,245,255], textColor: [11,58,119] },
+      theme: 'grid',
+      margin: { left: 40, right: 40 }
+    });
+    const afterTableY = doc.lastAutoTable.finalY || (y + 40);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Total: ${fmt(payload.total)}`, pageWidth - 40, afterTableY + 24, { align: 'right' });
+
+    const fileName = `${esIngreso ? 'Ingreso' : 'Venta'}_${payload.comprobante.numero}.pdf`;
+    if (options.autoPrint) {
+      // Abrir nueva pestaña e invocar impresión nativa del visor PDF
+      if (doc.autoPrint) doc.autoPrint();
+      const blobUrl = doc.output('bloburl');
+      window.open(blobUrl, '_blank');
+    } else if (options.open) {
+      const url = doc.output('bloburl');
+      window.open(url, '_blank');
+    } else {
+      doc.save(fileName);
+    }
+  } catch (err) {
+    console.error('descargarComprobantePDF error', err);
+    alert('No se pudo generar el PDF del comprobante.');
+  }
 }
 function recalcVentaTotals() {
   const descuentoPct = parseFloat((document.getElementById('venDescPct')?.value || '0')) || 0;
@@ -663,6 +755,7 @@ const ventasFiltroDesde = document.getElementById('ventasFiltroDesde');
 const ventasFiltroHasta = document.getElementById('ventasFiltroHasta');
 const ventasFiltroAplicar = document.getElementById('ventasFiltroAplicar');
 const ventasFiltroLimpiar = document.getElementById('ventasFiltroLimpiar');
+const ventasTotalFooter = document.getElementById('ventasTotalFooter');
 
 function getDateRange() {
   const today = new Date();
@@ -686,7 +779,8 @@ function getDateRange() {
   const fmtDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   return {
     desde: desde ? fmtDate(desde) : null,
-    hasta: hasta ? fmtDate(hasta) : null
+    hasta: hasta ? fmtDate(hasta) : null,
+    rango
   };
 }
 
@@ -701,10 +795,31 @@ async function refreshVentasHistorial() {
     if (error) { console.error('sales fetch error', error); ventasHistTablaBody.innerHTML = `<tr><td colspan="7">Error al cargar ventas.</td></tr>`; return; }
     if (!data || data.length === 0) {
       ventasHistTablaBody.innerHTML = `<tr><td colspan="7">No hay ventas para el rango seleccionado.</td></tr>`;
+      if (ventasTotalFooter) ventasTotalFooter.innerHTML = '<strong>Total ventas (sin anuladas):</strong> Bs 0.00';
       return;
     }
-    ventasHistTablaBody.innerHTML = data.map(s => `
-      <tr>
+    // Build set of annulled sales based on movements
+    let anuladasSet = new Set();
+    try {
+      const annDetailStrings = data.map(s => `Anulación comprobante ${s.numero}`);
+      let annMovs = [];
+      const chunkSize = 100;
+      for (let i = 0; i < annDetailStrings.length; i += chunkSize) {
+        const chunk = annDetailStrings.slice(i, i + chunkSize);
+        const { data: annChunk, error: annErr } = await supabase
+          .from('movements')
+          .select('detalle')
+          .in('detalle', chunk);
+        if (!annErr && annChunk) annMovs = annMovs.concat(annChunk);
+      }
+      anuladasSet = new Set(annMovs.map(m => String(m.detalle || '').replace('Anulación comprobante ', '')));
+    } catch {}
+
+    ventasHistTablaBody.innerHTML = data.map(s => {
+      const isAnuladaRow = (s.estado === 'anulada') || anuladasSet.has(String(s.numero));
+      const cls = isAnuladaRow ? 'venta-anulada' : '';
+      return `
+      <tr class="${cls}">
         <td>${s.fecha}</td>
         <td>${s.numero}</td>
         <td>${s.cliente}</td>
@@ -713,10 +828,25 @@ async function refreshVentasHistorial() {
         <td>${fmt(s.descuento || 0)}</td>
         <td>${fmt(s.total || 0)}</td>
         <td><button type="button" class="secondary btn-ver-detalles" data-sale-id="${s.id}">Ver detalles</button></td>
-      </tr>
-    `).join('');
+      </tr>`;
+    }).join('');
     // wire details buttons
     document.querySelectorAll('.btn-ver-detalles').forEach(btn => btn.addEventListener('click', onVerDetallesVenta));
+
+    // Compute totals excluding annulled using precomputed set
+    try {
+      const nonAnuladas = (data || []).filter(s => (s.estado !== 'anulada') && !anuladasSet.has(String(s.numero)));
+      const totalPeriodo = nonAnuladas.reduce((a, s) => a + (s.total || 0), 0);
+      if (ventasTotalFooter) {
+        const singleDay = range.rango === 'hoy' || (range.desde && range.hasta && range.desde === range.hasta);
+        ventasTotalFooter.innerHTML = singleDay
+          ? `<strong>Total del día (sin anuladas):</strong> ${fmt(totalPeriodo)}`
+          : `<strong>Total del periodo (sin anuladas):</strong> ${fmt(totalPeriodo)}`;
+      }
+    } catch (totErr) {
+      console.error('error computing totals', totErr);
+      if (ventasTotalFooter) ventasTotalFooter.innerHTML = '<strong>Total ventas (sin anuladas):</strong> Bs 0.00';
+    }
   } catch (e) { console.error('ventas historial exception', e); ventasHistTablaBody.innerHTML = `<tr><td colspan="7">Error inesperado cargando ventas.</td></tr>`; }
 }
 
@@ -819,9 +949,8 @@ async function onVerDetallesVenta(e) {
     reimpBtn.onclick = async () => {
       try {
         const mov = { comprobante: { numero: sale.numero, fecha: sale.fecha, entidad: sale.cliente }, items: data.map(di => ({ item: di.item, nombre: di.nombre, cantidad: di.cantidad, precioVenta: di.precio })), total: total };
-        const tempContainer = document.createElement('div');
-        renderComprobante('venta', mov, tempContainer, tempContainer);
-        printComprobante(tempContainer);
+        setLastComprobante('venta', mov);
+        await descargarComprobantePDF('venta', { autoPrint: true });
       } catch (e) { console.error('reimprimir error', e); alert('No se pudo reimprimir.'); }
     };
     pdfBtn.onclick = async () => {

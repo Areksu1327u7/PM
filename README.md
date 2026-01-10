@@ -21,14 +21,11 @@ También puede abrirlo directamente desde el Explorador de archivos.
 
 ## Notas
 
-- Para los gráficos se usa CDN de Chart.js; requiere conexión a Internet.
-- Esta es una demo sin control de acceso; la matriz de roles es ilustrativa.
+- Para losDN de Chart.js; requiere conexión a Internet.
+- Esta es una demo 
 - Si desea persistencia real y multiusuario, se recomienda agregar un backend (por ejemplo Node.js + Express + SQLite/PostgreSQL).
 
-## Supabase (Base de Datos)
-
-- Este proyecto ya está integrado con Supabase usando tus credenciales.
-- Crea las tablas y políticas ejecutando el archivo `supabase_schema.sql` en el SQL editor de tu proyecto Supabase.
+## no
 
 Pasos:
 1. Copia el contenido de `supabase_schema.sql`.

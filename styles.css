@@ -77,6 +77,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .table th, .table td { border-bottom: 1px solid var(--border); padding: 10px; text-align: left; font-size: 14px; color: var(--ink-600); }
 .table th { background: var(--blue-50); white-space: nowrap; font-weight: 700; color: var(--ink-700); }
 .table tbody tr:hover { background: rgba(59,130,246,0.06); }
+/* Ventas anuladas en historial: fondo rojizo suave */
+.table tbody tr.venta-anulada { background: #fff1f2; }
+.table tbody tr.venta-anulada:hover { background: #ffe4e6; }
 
 .note { font-size: 12px; color: #5b6a85; }
 .app-footer { text-align: center; padding: 24px; color: #5b6a85; }
@@ -123,7 +126,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   #printArea, #printArea * { visibility: visible; }
   #printArea { position: absolute; left: 0; right: 0; top: 0; }
   .comprobante-doc { box-shadow: none; border-radius: 0; border: none; }
+  /* Avoid printing link URLs */
+  a[href]:after { content: "" !important; }
 }
+@page { margin: 0; }
 .container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
 .page-section { margin-bottom: 24px; }
 .page-section[hidden] { display: none !important; }
