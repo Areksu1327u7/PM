@@ -170,7 +170,6 @@
                 <tr>
                   <th>ITEM</th>
                   <th>Nombre</th>
-                  <th>Categoría</th>
                   <th>CEJA disponible</th>
                   <th>Cantidad</th>
                   <th>Precio Venta (Bs)</th>
@@ -297,6 +296,15 @@
     <!-- Dashboard con gráficos -->
     <section id="dashboardSection" class="page-section" hidden>
       <h2>Dashboard</h2>
+      <!-- KPI tiles -->
+      <div class="grid-5" id="kpiGrid">
+        <div class="card kpi-card"><div class="kpi-title">Productos</div><div class="kpi-value" id="kpiTotalProductos">0</div></div>
+        <div class="card kpi-card"><div class="kpi-title">Stock Total</div><div class="kpi-value" id="kpiStockTotal">0</div></div>
+        <div class="card kpi-card"><div class="kpi-title">Valor Inventario</div><div class="kpi-value" id="kpiValorInventario">Bs 0.00</div></div>
+        <div class="card kpi-card"><div class="kpi-title">Ventas (Hoy)</div><div class="kpi-value" id="kpiVentasHoy">Bs 0.00</div></div>
+        <div class="card kpi-card"><div class="kpi-title">Ingresos (Hoy)</div><div class="kpi-value" id="kpiIngresosHoy">Bs 0.00</div></div>
+      </div>
+
       <div class="grid-3">
         <div class="card">
           <h3>Stock por Categoría</h3>
@@ -310,6 +318,26 @@
           <h3>Top Productos por Stock</h3>
           <canvas id="chartTopProductos"></canvas>
         </div>
+      </div>
+
+      <div class="grid-3">
+        <div class="card">
+          <h3>Valor de Inventario por Categoría</h3>
+          <canvas id="chartValorInventarioPorCategoria"></canvas>
+        </div>
+        <div class="card">
+          <h3>CEJA vs SENKATA por Categoría</h3>
+          <canvas id="chartDepositosPorCategoria"></canvas>
+        </div>
+        <div class="card" id="cardDescuentoPorDia">
+          <h3>Descuento Promedio por Día</h3>
+          <canvas id="chartDescuentoPorDia"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Ventas Acumuladas (últimos 30 días)</h3>
+        <canvas id="chartVentasAcumuladas"></canvas>
       </div>
     </section>
 

@@ -188,7 +188,6 @@ async function newVentaRow() {
   row.innerHTML = `
     <td><input type="text" placeholder="ITEM" class="ven-sku" list="${datalistId}" required /></td>
     <td><input type="text" placeholder="Nombre (auto)" class="ven-nombre" disabled /></td>
-    <td><input type="text" placeholder="Categoría" class="ven-cat" disabled /></td>
     <td><input type="text" placeholder="CEJA disponible" class="ven-ceja" disabled /></td>
     <td><input type="number" placeholder="Cantidad" class="ven-cant" min="1" required /></td>
     <td><input type="number" placeholder="Precio Venta (Bs)" class="ven-pvent" min="0" step="0.01" required /></td>
@@ -198,11 +197,10 @@ async function newVentaRow() {
   skuInput.addEventListener('change', async () => {
     const p = await findProductByITEM(skuInput.value);
     const nombreInput = row.querySelector('.ven-nombre');
-    const catInput = row.querySelector('.ven-cat');
     const cejaInput = row.querySelector('.ven-ceja');
     const precioInput = row.querySelector('.ven-pvent');
-    if (p) { nombreInput.value = p.nombre; catInput.value = p.categoria; cejaInput.value = (p.ceja ?? 0); precioInput.value = p.precio ?? 0; }
-    else { nombreInput.value = ''; catInput.value = ''; cejaInput.value = ''; precioInput.value = ''; }
+    if (p) { nombreInput.value = p.nombre; cejaInput.value = (p.ceja ?? 0); precioInput.value = p.precio ?? 0; }
+    else { nombreInput.value = ''; cejaInput.value = ''; precioInput.value = ''; }
   });
   const removeBtn = row.querySelector('.remove');
   removeBtn.addEventListener('click', () => row.remove());
@@ -1046,15 +1044,38 @@ adminGuardar.addEventListener('click', async () => {
 });
 
 // Dashboard
-let chartStockPorCategoria, chartMovimientos, chartTopProductos;
+let chartStockPorCategoria, chartMovimientos, chartTopProductos,
+    chartValorInventarioPorCategoria, chartDepositosPorCategoria,
+    chartDescuentoPorDia, chartVentasAcumuladas;
 async function refreshDashboard() {
   const products = await allProducts();
   const movements = await allMovements();
+  // Try to load sales for discount chart
+  let sales = [];
+  try {
+    const today = new Date();
+    const desde = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()-30).padStart(2,'0')}`; // approx last 30 days
+    const { data } = await supabase.from('sales').select('*').order('fecha', { ascending: true }).limit(1000);
+    sales = data || [];
+  } catch {}
   // Stock por categoría
   const byCat = {};
-  products.forEach(p => { const c = p.categoria || 'General'; byCat[c] = (byCat[c] || 0) + ((p.ceja||0)+(p.senkata||0)); });
+  const byCatValue = {};
+  const byCatCeja = {};
+  const byCatSenkata = {};
+  products.forEach(p => {
+    const c = p.categoria || 'General';
+    const stock = ((p.ceja||0)+(p.senkata||0));
+    byCat[c] = (byCat[c] || 0) + stock;
+    byCatValue[c] = (byCatValue[c] || 0) + stock * (p.precio || 0);
+    byCatCeja[c] = (byCatCeja[c] || 0) + (p.ceja || 0);
+    byCatSenkata[c] = (byCatSenkata[c] || 0) + (p.senkata || 0);
+  });
   const catLabels = Object.keys(byCat);
   const catData = Object.values(byCat);
+  const catValueData = catLabels.map(c => byCatValue[c] || 0);
+  const catCejaData = catLabels.map(c => byCatCeja[c] || 0);
+  const catSenkData = catLabels.map(c => byCatSenkata[c] || 0);
   // Movimientos por día
   const byDay = {};
   movements.forEach(m => {
@@ -1065,18 +1086,27 @@ async function refreshDashboard() {
   const dayLabels = Object.keys(byDay).sort();
   const dayIng = dayLabels.map(d => byDay[d].ingreso);
   const dayVen = dayLabels.map(d => byDay[d].venta);
+  const dayVenCumulative = dayVen.reduce((acc, v, i) => { acc.push((acc[i-1] || 0) + v); return acc; }, []);
   // Top productos por stock
-  const top = [...products].sort((a,b) => (b.stock||0)-(a.stock||0)).slice(0,10);
+  const top = [...products].sort((a,b) => (((b.ceja||0)+(b.senkata||0))-(((a.ceja||0)+(a.senkata||0))))).slice(0,10);
   const topLabels = top.map(p => p.nombre);
-  const topData = top.map(p => p.stock || 0);
+  const topData = top.map(p => ((p.ceja||0)+(p.senkata||0)));
 
   // Render charts
   const c1 = document.getElementById('chartStockPorCategoria').getContext('2d');
   const c2 = document.getElementById('chartMovimientos').getContext('2d');
   const c3 = document.getElementById('chartTopProductos').getContext('2d');
+  const c4 = document.getElementById('chartValorInventarioPorCategoria').getContext('2d');
+  const c5 = document.getElementById('chartDepositosPorCategoria').getContext('2d');
+  const c6 = document.getElementById('chartDescuentoPorDia')?.getContext('2d');
+  const c7 = document.getElementById('chartVentasAcumuladas').getContext('2d');
   if (chartStockPorCategoria) chartStockPorCategoria.destroy();
   if (chartMovimientos) chartMovimientos.destroy();
   if (chartTopProductos) chartTopProductos.destroy();
+  if (chartValorInventarioPorCategoria) chartValorInventarioPorCategoria.destroy();
+  if (chartDepositosPorCategoria) chartDepositosPorCategoria.destroy();
+  if (chartDescuentoPorDia) chartDescuentoPorDia.destroy();
+  if (chartVentasAcumuladas) chartVentasAcumuladas.destroy();
   chartStockPorCategoria = new Chart(c1, {
     type: 'bar', data: { labels: catLabels, datasets: [{ label: 'Stock', data: catData, backgroundColor: '#0a6cff' }] }, options: { responsive: true }
   });
@@ -1089,6 +1119,55 @@ async function refreshDashboard() {
   chartTopProductos = new Chart(c3, {
     type: 'pie', data: { labels: topLabels, datasets: [{ data: topData, backgroundColor: ['#0a6cff','#3b82f6','#7aa7e1','#0f63d6','#eef5ff','#dbe7ff','#93c5fd','#60a5fa','#2563eb','#1d4ed8'] }] }, options: { responsive: true }
   });
+  chartValorInventarioPorCategoria = new Chart(c4, {
+    type: 'bar', data: { labels: catLabels, datasets: [{ label: 'Valor Inventario (Bs)', data: catValueData, backgroundColor: '#2563eb' }] }, options: { responsive: true, scales: { y: { beginAtZero: true } } }
+  });
+  chartDepositosPorCategoria = new Chart(c5, {
+    type: 'bar', data: { labels: catLabels, datasets: [
+      { label: 'CEJA', data: catCejaData, backgroundColor: '#60a5fa' },
+      { label: 'SENKATA', data: catSenkData, backgroundColor: '#93c5fd' }
+    ] }, options: { responsive: true, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
+  });
+  // Descuento promedio por día (si hay tabla sales)
+  const cardDesc = document.getElementById('cardDescuentoPorDia');
+  if (c6 && sales && sales.length) {
+    const byDayDesc = {};
+    sales.forEach(s => {
+      const d = s.fecha;
+      if (!byDayDesc[d]) byDayDesc[d] = { sum: 0, count: 0 };
+      byDayDesc[d].sum += (s.descuento_pct || 0);
+      byDayDesc[d].count += 1;
+    });
+    const descLabels = Object.keys(byDayDesc).sort();
+    const descAvg = descLabels.map(d => byDayDesc[d].count ? (byDayDesc[d].sum / byDayDesc[d].count) : 0);
+    chartDescuentoPorDia = new Chart(c6, {
+      type: 'line', data: { labels: descLabels, datasets: [ { label: 'Descuento promedio (%)', data: descAvg, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.15)', tension: 0.3 } ] }, options: { responsive: true }
+    });
+    if (cardDesc) cardDesc.hidden = false;
+  } else {
+    if (cardDesc) cardDesc.hidden = true;
+  }
+  chartVentasAcumuladas = new Chart(c7, {
+    type: 'line', data: { labels: dayLabels, datasets: [ { label: 'Ventas acumuladas', data: dayVenCumulative, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.15)', tension: 0.3 } ] }, options: { responsive: true }
+  });
+
+  // KPIs
+  const kpiTotalProductos = document.getElementById('kpiTotalProductos');
+  const kpiStockTotal = document.getElementById('kpiStockTotal');
+  const kpiValorInventario = document.getElementById('kpiValorInventario');
+  const kpiVentasHoy = document.getElementById('kpiVentasHoy');
+  const kpiIngresosHoy = document.getElementById('kpiIngresosHoy');
+  const totalProductos = products.length;
+  const totalStock = products.reduce((a,p)=>a+((p.ceja||0)+(p.senkata||0)),0);
+  const valorInventario = products.reduce((a,p)=>a+(((p.ceja||0)+(p.senkata||0))*(p.precio||0)),0);
+  const todayStr = new Date().toISOString().slice(0,10);
+  const ventasHoy = movements.filter(m => m.tipo==='venta' && String(m.fecha)===todayStr).reduce((a,m)=>a+(m.total||0),0);
+  const ingresosHoy = movements.filter(m => m.tipo==='ingreso' && String(m.fecha)===todayStr).reduce((a,m)=>a+(m.total||0),0);
+  if (kpiTotalProductos) kpiTotalProductos.textContent = String(totalProductos);
+  if (kpiStockTotal) kpiStockTotal.textContent = String(totalStock);
+  if (kpiValorInventario) kpiValorInventario.textContent = fmt(valorInventario);
+  if (kpiVentasHoy) kpiVentasHoy.textContent = fmt(ventasHoy);
+  if (kpiIngresosHoy) kpiIngresosHoy.textContent = fmt(ingresosHoy);
 }
 
 // Movimientos UI

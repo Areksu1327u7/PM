@@ -60,6 +60,8 @@ input:focus, select:focus { border-color: var(--blue-500); box-shadow: 0 0 0 3px
 .items .ven-cant { max-width: 110px; }
 .items .ven-pvent { max-width: 140px; }
 .items .remove { white-space: nowrap; }
+/* Make product name wider in venta rows */
+.items .ven-nombre { min-width: 320px; }
 
 /* Movimientos widths */
 .items .mov-item { min-width: 180px; }
@@ -119,6 +121,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Totals bar */
 #ventaTotals { background: var(--blue-50); border: 1px solid var(--blue-100); border-radius: 10px; padding: 10px; }
+
+/* KPI cards */
+.kpi-card { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.kpi-title { font-size: 12px; color: var(--ink-500); }
+.kpi-value { font-size: 18px; font-weight: 800; color: var(--ink-700); }
 
 /* Print only the comprobante */
 @media print {
