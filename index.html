@@ -173,6 +173,7 @@
                   <th>CEJA disponible</th>
                   <th>Cantidad</th>
                   <th>Precio Venta (Bs)</th>
+                  <th>Subtotal (Bs)</th>
                   <th>Acción</th>
                 </tr>
               </thead>
@@ -378,6 +379,10 @@
       </div>
       <div id="ventaDetallesBody" class="modal-body"></div>
       <div class="modal-footer">
+        <button type="button" id="ventaDetallesEditar" class="secondary">Editar</button>
+        <button type="button" id="ventaDetallesAgregarItem" class="secondary" disabled>Agregar ítem</button>
+        <button type="button" id="ventaDetallesGuardar" class="primary" disabled>Guardar cambios</button>
+        <button type="button" id="ventaDetallesCancelar" class="secondary" hidden>Cancelar edición</button>
         <button type="button" id="ventaDetallesReimprimir" class="secondary">Reimprimir comprobante</button>
         <button type="button" id="ventaDetallesPDF" class="secondary">Descargar PDF</button>
         <button type="button" id="ventaDetallesAnular" class="btn-danger">Anular venta</button>

@@ -59,6 +59,7 @@ input:focus, select:focus { border-color: var(--blue-500); box-shadow: 0 0 0 3px
 .items .ven-ceja { max-width: 120px; }
 .items .ven-cant { max-width: 110px; }
 .items .ven-pvent { max-width: 140px; }
+.items .ven-subtotal { min-width: 140px; text-align: right; }
 .items .remove { white-space: nowrap; }
 /* Make product name wider in venta rows */
 .items .ven-nombre { min-width: 320px; }

@@ -191,6 +191,7 @@ async function newVentaRow() {
     <td><input type="text" placeholder="CEJA disponible" class="ven-ceja" disabled /></td>
     <td><input type="number" placeholder="Cantidad" class="ven-cant" min="1" required /></td>
     <td><input type="number" placeholder="Precio Venta (Bs)" class="ven-pvent" min="0" step="0.01" required /></td>
+    <td class="ven-subtotal">Bs 0.00</td>
     <td><button type="button" class="remove">Eliminar</button></td>
   `;
   const skuInput = row.querySelector('.ven-sku');
@@ -201,9 +202,10 @@ async function newVentaRow() {
     const precioInput = row.querySelector('.ven-pvent');
     if (p) { nombreInput.value = p.nombre; cejaInput.value = (p.ceja ?? 0); precioInput.value = p.precio ?? 0; }
     else { nombreInput.value = ''; cejaInput.value = ''; precioInput.value = ''; }
+    recalcVentaTotals();
   });
   const removeBtn = row.querySelector('.remove');
-  removeBtn.addEventListener('click', () => row.remove());
+  removeBtn.addEventListener('click', () => { row.remove(); recalcVentaTotals(); });
   return row;
 }
 
@@ -499,6 +501,12 @@ function recalcVentaTotals() {
     cantidad: parseFloat(r.querySelector('.ven-cant')?.value || '0') || 0,
     precio: parseFloat(r.querySelector('.ven-pvent')?.value || '0') || 0
   }));
+  // Update per-row subtotal
+  filas.forEach((r, i) => {
+    const sub = (items[i].cantidad * items[i].precio) || 0;
+    const cell = r.querySelector('.ven-subtotal');
+    if (cell) cell.textContent = fmt(sub);
+  });
   const subtotal = items.reduce((a,i)=>a+(i.cantidad*i.precio),0);
   const descuento = subtotal * (descuentoPct/100);
   const total = subtotal - descuento;
@@ -864,12 +872,13 @@ async function onVerDetallesVenta(e) {
     const modal = document.getElementById('ventaDetallesModal');
     const body = document.getElementById('ventaDetallesBody');
     const rows = (data||[]).map(it => `
-      <tr>
+      <tr data-item-id="${it.id}" data-item-sku="${it.item}">
         <td>${it.item}</td>
         <td>${it.nombre}</td>
-        <td style="text-align:right">${it.cantidad}</td>
-        <td style="text-align:right">${fmt(it.precio)}</td>
-        <td style="text-align:right">${fmt(it.subtotal)}</td>
+        <td class="cell-cant" style="text-align:right">${it.cantidad}</td>
+        <td class="cell-precio" style="text-align:right">${fmt(it.precio)}</td>
+        <td class="cell-subtotal" style="text-align:right">${fmt(it.subtotal)}</td>
+        <td class="cell-actions" style="text-align:right"></td>
       </tr>
     `).join('');
     const subtotal = sale?.subtotal ?? (data||[]).reduce((a,i)=>a+(i.subtotal||0),0);
@@ -935,15 +944,239 @@ async function onVerDetallesVenta(e) {
     const reimpBtn = document.getElementById('ventaDetallesReimprimir');
     const pdfBtn = document.getElementById('ventaDetallesPDF');
     const anularBtn = document.getElementById('ventaDetallesAnular');
+    const editBtn = document.getElementById('ventaDetallesEditar');
+    const saveBtn = document.getElementById('ventaDetallesGuardar');
+    const cancelBtn = document.getElementById('ventaDetallesCancelar');
+    const addItemBtn = document.getElementById('ventaDetallesAgregarItem');
     // Reset button states each time modal opens
     if (reimpBtn) reimpBtn.disabled = false;
     if (pdfBtn) pdfBtn.disabled = false;
     if (anularBtn) { anularBtn.disabled = false; anularBtn.textContent = 'Anular venta'; }
+    if (editBtn) editBtn.disabled = false;
+    if (saveBtn) saveBtn.disabled = true;
+    if (addItemBtn) addItemBtn.disabled = true;
+    if (cancelBtn) cancelBtn.hidden = true;
     if (isAnulada) {
       if (reimpBtn) reimpBtn.disabled = true;
       if (pdfBtn) pdfBtn.disabled = true;
       if (anularBtn) { anularBtn.disabled = true; anularBtn.textContent = 'Venta anulada'; }
+      if (editBtn) editBtn.disabled = true;
+      if (saveBtn) saveBtn.disabled = true;
+      if (addItemBtn) addItemBtn.disabled = true;
     }
+
+    let isEditing = false;
+    function recalcModalTotals() {
+      // Compute subtotal from table rows
+      const tbody = body.querySelector('tbody');
+      let subtotalLive = 0;
+      Array.from(tbody.querySelectorAll('tr')).forEach(tr => {
+        if (tr.dataset.removed === '1') return;
+        const subTextEl = tr.querySelector('.cell-subtotal');
+        let subNum = 0;
+        if (isEditing) {
+          const cant = parseFloat(tr.querySelector('.edit-cant')?.value || '0') || 0;
+          const precio = parseFloat(tr.querySelector('.edit-precio')?.value || '0') || 0;
+          subNum = cant * precio;
+          if (subTextEl) subTextEl.textContent = fmt(subNum);
+        } else {
+          // parse formatted text
+          subNum = parseFloat(String(subTextEl?.textContent || '').replace(/[^0-9.]/g,'')) || 0;
+        }
+        subtotalLive += subNum;
+      });
+      const descPctInput = document.getElementById('editDescPct');
+      const descPct = descPctInput ? (parseFloat(descPctInput.value || '0') || 0) : (sale?.descuento_pct || 0);
+      const descuentoBs = subtotalLive * (descPct/100);
+      const totalLive = subtotalLive - descuentoBs;
+      const totalsEl = body.querySelector('.sale-totals');
+      if (totalsEl) {
+        totalsEl.innerHTML = `
+          <div>Subtotal: ${fmt(subtotalLive)}</div>
+          <div>Descuento: ${Number(descPct).toFixed(2)}% (${fmt(descuentoBs)}) ${isEditing ? '<button type="button" id="editDescClear" class="secondary" style="margin-left:8px">Quitar</button>' : ''}</div>
+          <div>Total: ${fmt(totalLive)}</div>
+        `;
+        if (isEditing) {
+          const clearBtn = document.getElementById('editDescClear');
+          clearBtn.onclick = () => { const inp = document.getElementById('editDescPct'); if (inp) { inp.value = '0'; recalcModalTotals(); } };
+        }
+      }
+    }
+
+    function enterEditMode() {
+      if (isEditing) return;
+      isEditing = true;
+      // Disable actions while editing
+      reimpBtn.disabled = true; pdfBtn.disabled = true; anularBtn.disabled = true; editBtn.disabled = true; addItemBtn.disabled = false;
+      saveBtn.disabled = false; cancelBtn.hidden = true; // keep cancel hidden until a change? show it:
+      cancelBtn.hidden = false;
+      // Turn cantidad/precio cells into inputs
+      const tbody = body.querySelector('tbody');
+      Array.from(tbody.querySelectorAll('tr')).forEach(tr => {
+        const cantCell = tr.querySelector('.cell-cant');
+        const precioCell = tr.querySelector('.cell-precio');
+        const subtotalCell = tr.querySelector('.cell-subtotal');
+        const actionsCell = tr.querySelector('.cell-actions');
+        const cantVal = parseFloat(cantCell.textContent || '0') || 0;
+        const precioVal = parseFloat(String(precioCell.textContent || '').replace(/[^0-9.]/g,'')) || 0;
+        cantCell.innerHTML = `<input type="number" class="edit-cant" min="0" value="${cantVal}">`;
+        precioCell.innerHTML = `<input type="number" class="edit-precio" min="0" step="0.01" value="${precioVal.toFixed(2)}">`;
+        subtotalCell.innerHTML = fmt(cantVal * precioVal);
+        if (actionsCell) actionsCell.innerHTML = `<button type="button" class="row-remove btn-danger">Quitar</button>`;
+      });
+      // Listen for changes to update subtotal live
+      tbody.addEventListener('input', (ev) => {
+        if (!isEditing) return;
+        const tr = ev.target.closest('tr');
+        const cant = parseFloat(tr.querySelector('.edit-cant')?.value || '0') || 0;
+        const precio = parseFloat(tr.querySelector('.edit-precio')?.value || '0') || 0;
+        tr.querySelector('.cell-subtotal').textContent = fmt(cant * precio);
+        recalcModalTotals();
+      });
+      // Row remove
+      tbody.addEventListener('click', (ev) => {
+        if (!isEditing) return;
+        const btn = ev.target.closest('.row-remove');
+        if (btn) {
+          const tr = btn.closest('tr');
+          tr.dataset.removed = '1';
+          // visually dim
+          tr.style.opacity = '0.6';
+          // disable inputs
+          tr.querySelectorAll('input').forEach(inp => inp.disabled = true);
+          recalcModalTotals();
+        }
+      });
+      // Discount editor
+      const totalsEl = body.querySelector('.sale-totals');
+      if (totalsEl) {
+        totalsEl.insertAdjacentHTML('afterbegin', `<div style="grid-column: 1 / -1">Descuento (%): <input type="number" id="editDescPct" min="0" max="100" step="0.01" value="${Number(sale?.descuento_pct||0).toFixed(2)}"></div>`);
+        const descInp = document.getElementById('editDescPct');
+        descInp.addEventListener('input', () => recalcModalTotals());
+      }
+      recalcModalTotals();
+    }
+    function exitEditMode(refresh = false) {
+      isEditing = false;
+      reimpBtn.disabled = false; pdfBtn.disabled = false; anularBtn.disabled = false; editBtn.disabled = false; addItemBtn.disabled = true;
+      saveBtn.disabled = true; cancelBtn.hidden = true;
+      if (refresh) onVerDetallesVenta({ currentTarget: { dataset: { saleId } } });
+    }
+    editBtn.onclick = () => enterEditMode();
+    cancelBtn.onclick = () => exitEditMode(true);
+
+    saveBtn.onclick = async () => {
+      if (!isEditing) return;
+      try {
+        // Collect edits
+        const tbody = body.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const edits = rows.filter(tr => !tr.classList.contains('row-new') && tr.dataset.itemId).map(tr => {
+          const id = tr.dataset.itemId;
+          const sku = tr.dataset.itemSku;
+          const old = data.find(d => String(d.id) === String(id));
+          const newCant = parseInt(tr.querySelector('.edit-cant')?.value || String(old.cantidad || 0), 10);
+          const newPrecio = parseFloat(tr.querySelector('.edit-precio')?.value || String(old.precio || 0));
+          return { id, sku, oldCant: old.cantidad || 0, newCant, oldPrecio: old.precio || 0, newPrecio };
+        });
+        const removedIds = rows.filter(tr => tr.dataset.itemId && tr.dataset.removed === '1').map(tr => tr.dataset.itemId);
+        const newRows = rows.filter(tr => tr.classList.contains('row-new'));
+        // Validate inventory deltas
+        const products = await allProducts();
+        for (const ed of edits) {
+          const p = products.find(x => (x.item||'').toLowerCase() === (ed.sku||'').toLowerCase());
+          if (!p) { alert(`Producto no encontrado: ${ed.sku}`); return; }
+          const delta = ed.newCant - ed.oldCant;
+          if (delta > 0 && (p.ceja || 0) < delta) { alert(`CEJA insuficiente para ${p.item}. Disponible: ${p.ceja}, requiere adicional: ${delta}`); return; }
+        }
+        for (const tr of newRows) {
+          const sku = tr.querySelector('.edit-sku')?.value.trim();
+          const cant = parseInt(tr.querySelector('.edit-cant')?.value || '0', 10);
+          const precio = parseFloat(tr.querySelector('.edit-precio')?.value || '0');
+          if (!sku || cant <= 0 || precio < 0) { alert('Complete SKU, cantidad y precio en el nuevo ítem'); return; }
+          const p = products.find(x => (x.item||'').toLowerCase() === sku.toLowerCase());
+          if (!p) { alert(`Producto no encontrado: ${sku}`); return; }
+          if ((p.ceja || 0) < cant) { alert(`CEJA insuficiente para ${p.item}. Disponible: ${p.ceja}, requiere: ${cant}`); return; }
+        }
+        // Apply inventory updates and persist sales_items
+        for (const ed of edits) {
+          const p = products.find(x => (x.item||'').toLowerCase() === (ed.sku||'').toLowerCase());
+          const delta = ed.newCant - ed.oldCant;
+          if (delta !== 0) {
+            await upsertProduct({ id: p.id, item: p.item, nombre: p.nombre, categoria: p.categoria, unidad: p.unidad, precio: p.precio, ceja: (p.ceja || 0) - delta, senkata: p.senkata || 0 });
+          }
+          await supabase.from('sales_items').update({ cantidad: ed.newCant, precio: ed.newPrecio, subtotal: ed.newCant * ed.newPrecio }).eq('id', ed.id);
+        }
+        // Removed rows: inventory rollback and delete
+        for (const rid of removedIds) {
+          const old = data.find(d => String(d.id) === String(rid));
+          const p = products.find(x => (x.item||'').toLowerCase() === (old.item||'').toLowerCase());
+          if (p) {
+            await upsertProduct({ id: p.id, item: p.item, nombre: p.nombre, categoria: p.categoria, unidad: p.unidad, precio: p.precio, ceja: (p.ceja || 0) + (old.cantidad || 0), senkata: p.senkata || 0 });
+          }
+          await supabase.from('sales_items').delete().eq('id', rid);
+        }
+        // New rows: inventory apply and insert
+        for (const tr of newRows) {
+          const sku = tr.querySelector('.edit-sku')?.value.trim();
+          const cant = parseInt(tr.querySelector('.edit-cant')?.value || '0', 10);
+          const precio = parseFloat(tr.querySelector('.edit-precio')?.value || '0');
+          const p = products.find(x => (x.item||'').toLowerCase() === sku.toLowerCase());
+          await upsertProduct({ id: p.id, item: p.item, nombre: p.nombre, categoria: p.categoria, unidad: p.unidad, precio: p.precio, ceja: (p.ceja || 0) - cant, senkata: p.senkata || 0 });
+          await supabase.from('sales_items').insert({ sale_id: saleId, item: p.item, nombre: p.nombre, cantidad: cant, precio, subtotal: cant * precio });
+        }
+        // Recompute totals and update sale
+        const { data: newItems } = await supabase.from('sales_items').select('*').eq('sale_id', saleId);
+        const newSubtotal = (newItems || []).reduce((a,i)=>a+(i.subtotal||0),0);
+        const descPctInput = document.getElementById('editDescPct');
+        const descPct = descPctInput ? (parseFloat(descPctInput.value || '0') || 0) : (sale?.descuento_pct || 0);
+        const newDescuento = newSubtotal * (descPct/100);
+        const newTotal = newSubtotal - newDescuento;
+        await supabase.from('sales').update({ subtotal: newSubtotal, descuento: newDescuento, descuento_pct: descPct, total: newTotal }).eq('id', saleId);
+        // Log adjustment movement
+        const totalDelta = (newTotal - (sale?.total || 0));
+        const qtyDelta = edits.reduce((a,ed)=>a + (ed.newCant - ed.oldCant), 0);
+        const addQty = newRows.reduce((a,tr)=>a + (parseInt(tr.querySelector('.edit-cant')?.value || '0', 10) || 0), 0);
+        const remQty = removedIds.reduce((a,rid)=>{ const old = data.find(d => String(d.id)===String(rid)); return a + (old?.cantidad || 0); }, 0);
+        const totalQtyDelta = qtyDelta + addQty - remQty;
+        await addMovement({ tipo: 'venta', fecha: sale.fecha, item: '-', nombre: sale.cliente + ' (AJUSTE)', cantidad: totalQtyDelta, detalle: `Ajuste comprobante ${sale.numero}`, total: totalDelta, descuento: 0 });
+        alert('Cambios guardados. Inventario y comprobante actualizados.');
+        exitEditMode(true);
+        await refreshInventoryUI();
+        await refreshVentasHistorial();
+      } catch (err) {
+        console.error('guardar edicion error', err);
+        alert('No se pudieron guardar los cambios.');
+      }
+    };
+
+    // Add item flow (edit mode only)
+    addItemBtn.onclick = async () => {
+      if (!isEditing) return;
+      const tbody = body.querySelector('tbody');
+      const tr = document.createElement('tr');
+      tr.classList.add('row-new');
+      tr.innerHTML = `
+        <td><input type="text" class="edit-sku" list="datalistProductos" placeholder="ITEM" /></td>
+        <td class="cell-nombre">-</td>
+        <td class="cell-cant" style="text-align:right"><input type="number" class="edit-cant" min="0" value="0"></td>
+        <td class="cell-precio" style="text-align:right"><input type="number" class="edit-precio" min="0" step="0.01" value="0.00"></td>
+        <td class="cell-subtotal" style="text-align:right">${fmt(0)}</td>
+        <td class="cell-actions" style="text-align:right"><button type="button" class="row-remove btn-danger">Quitar</button></td>
+      `;
+      tbody.appendChild(tr);
+      const skuInput = tr.querySelector('.edit-sku');
+      skuInput.addEventListener('change', async () => {
+        const val = skuInput.value.trim();
+        const p = await findProductByITEM(val);
+        const nombreCell = tr.querySelector('.cell-nombre');
+        const precioInput = tr.querySelector('.edit-precio');
+        if (p) { nombreCell.textContent = p.nombre || '-'; precioInput.value = (p.precio || 0).toFixed(2); }
+        else { nombreCell.textContent = 'No encontrado'; precioInput.value = '0.00'; }
+        recalcModalTotals();
+      });
+      tr.addEventListener('input', () => recalcModalTotals());
+    };
     reimpBtn.onclick = async () => {
       try {
         const mov = { comprobante: { numero: sale.numero, fecha: sale.fecha, entidad: sale.cliente }, items: data.map(di => ({ item: di.item, nombre: di.nombre, cantidad: di.cantidad, precioVenta: di.precio })), total: total };
