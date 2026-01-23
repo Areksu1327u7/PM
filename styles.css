@@ -14,6 +14,14 @@
   --border: #e5e7eb;
 }
 
+/* Disabled button hover tooltip */
+button[disabled][data-hint] { position: relative; }
+button[disabled][data-hint]:hover::after { content: attr(data-hint); position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% + 8px); background: #222; color: #fff; padding: 6px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,0.2); z-index: 10; }
+button[disabled][data-hint]:hover::before { content: ''; position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% + 6px); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 6px solid #222; z-index: 10; }
+
+/* Slightly larger ITEM input in venta rows */
+.items .ven-sku { min-width: 200px; }
+
 html, body { font-family: "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--ink-600); background: var(--bg); }
 h1, h2, h3 { color: var(--ink-700); letter-spacing: .2px; }
 p { color: var(--ink-500); }
@@ -40,7 +48,7 @@ p { color: var(--ink-500); }
   --blue-700: #2563eb;
 }
 
-.container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+.container { max-width: 1100px; margin: 24px auto; padding: 0 24px; }
 .page-section { margin-bottom: 24px; }
 .page-section[hidden] { display: none !important; }
 .card { background: var(--surface); padding: 18px; border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,0.06); border: 1px solid var(--border); margin-bottom: 16px; }
@@ -59,13 +67,14 @@ input:focus, select:focus { border-color: var(--blue-500); box-shadow: 0 0 0 3px
 .items .ven-ceja { max-width: 120px; }
 .items .ven-cant { max-width: 110px; }
 .items .ven-pvent { max-width: 140px; }
-.items .ven-subtotal { min-width: 140px; text-align: right; }
+.items .ven-subtotal { min-width: 120px; text-align: right; }
 .items .remove { white-space: nowrap; }
-/* Make product name wider in venta rows */
-.items .ven-nombre { min-width: 320px; }
+/* Make product name wider in venta rows (balanced) */
+.items .ven-nombre { min-width: 260px; }
 
 /* Movimientos widths */
 .items .mov-item { min-width: 180px; }
+.items .ven-sku { min-width: 120px; }
 .items .mov-cant { max-width: 120px; }
 
 .actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
@@ -138,7 +147,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   a[href]:after { content: "" !important; }
 }
 @page { margin: 0; }
-.container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+.container { max-width: 1100px; margin: 24px auto; padding: 0 24px; }
 .page-section { margin-bottom: 24px; }
 .page-section[hidden] { display: none !important; }
 .card { background: #fff; padding: 16px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 16px; }

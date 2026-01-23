@@ -78,6 +78,7 @@ const venAddItemBtn = document.getElementById('venAddItem');
 const formVenta = document.getElementById('formVenta');
 const venLimpiarBtn = document.getElementById('venLimpiar');
 const venImprimirBtn = document.getElementById('venImprimir');
+const venGuardarBtn = document.getElementById('venGuardar');
 const ventaComprobante = document.getElementById('ventaComprobante');
 const ventaComprobanteBody = document.getElementById('ventaComprobanteBody');
 
@@ -311,6 +312,11 @@ formVenta.addEventListener('submit', async (e) => {
   } catch (se) { console.error('save sale error', se); }
   renderComprobante('venta', { comprobante: { numero: num, fecha, entidad: cliente }, items: detailedItems, total: totalConDesc }, ventaComprobanteBody, ventaComprobante);
   venImprimirBtn.disabled = false;
+  if (venGuardarBtn) {
+    venGuardarBtn.disabled = true;
+    venGuardarBtn.setAttribute('data-hint', 'Guardado. Usa «Limpiar» para habilitar.');
+    venGuardarBtn.title = 'Guardado. Usa «Limpiar» para habilitar.';
+  }
   alert('Venta guardada. Inventario actualizado.');
   await refreshVentasHistorial();
   setAutoSaleNumber();
@@ -322,6 +328,11 @@ venLimpiarBtn.addEventListener('click', async () => {
   venItemsDiv.appendChild(await newVentaRow());
   ventaComprobante.hidden = true;
   venImprimirBtn.disabled = true;
+  if (venGuardarBtn) {
+    venGuardarBtn.disabled = false;
+    venGuardarBtn.removeAttribute('data-hint');
+    venGuardarBtn.removeAttribute('title');
+  }
   setAutoSaleNumber();
   recalcVentaTotals();
 });
