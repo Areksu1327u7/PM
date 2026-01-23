@@ -892,6 +892,7 @@ const ventasHistTablaBody = document.getElementById('ventasHistTabla')?.querySel
 const ventasFiltroRango = document.getElementById('ventasFiltroRango');
 const ventasFiltroDesde = document.getElementById('ventasFiltroDesde');
 const ventasFiltroHasta = document.getElementById('ventasFiltroHasta');
+const ventasFiltroCliente = document.getElementById('ventasFiltroCliente');
 const ventasFiltroAplicar = document.getElementById('ventasFiltroAplicar');
 const ventasFiltroLimpiar = document.getElementById('ventasFiltroLimpiar');
 const ventasTotalFooter = document.getElementById('ventasTotalFooter');
@@ -930,6 +931,8 @@ async function refreshVentasHistorial() {
     let query = supabase.from('sales').select('*');
     if (range.desde) query = query.gte('fecha', range.desde);
     if (range.hasta) query = query.lte('fecha', range.hasta);
+    const clienteQ = ventasFiltroCliente?.value?.trim();
+    if (clienteQ) query = query.ilike('cliente', `%${clienteQ}%`);
     const { data, error } = await query.order('fecha', { ascending: false }).limit(500);
     if (error) { console.error('sales fetch error', error); ventasHistTablaBody.innerHTML = `<tr><td colspan="7">Error al cargar ventas.</td></tr>`; return; }
     if (!data || data.length === 0) {
@@ -1353,6 +1356,7 @@ ventasFiltroLimpiar?.addEventListener('click', async () => {
   if (ventasFiltroRango) ventasFiltroRango.value = 'todo';
   if (ventasFiltroDesde) ventasFiltroDesde.value = '';
   if (ventasFiltroHasta) ventasFiltroHasta.value = '';
+  if (ventasFiltroCliente) ventasFiltroCliente.value = '';
   await refreshVentasHistorial();
 });
 
