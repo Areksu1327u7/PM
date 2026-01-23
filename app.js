@@ -707,12 +707,134 @@ function renderInventoryTable(list) {
       <td>
         <button class="secondary btn-edit">Editar</button>
         <button class="btn-delete">Eliminar</button>
+        <button class="secondary btn-ver-ventas" title="Ver ventas de este producto">🔎</button>
       </td>
     </tr>
   `).join('');
   // Wire acciones
   invTabla.querySelectorAll('.btn-edit').forEach(btn => btn.addEventListener('click', onEditProduct));
   invTabla.querySelectorAll('.btn-delete').forEach(btn => btn.addEventListener('click', onDeleteProduct));
+  invTabla.querySelectorAll('.btn-ver-ventas').forEach(btn => btn.addEventListener('click', onVerVentasProducto));
+}
+
+async function onVerVentasProducto(e) {
+  const tr = e.target.closest('tr');
+  const item = tr?.dataset?.item;
+  if (!item) return;
+  await showProductoVentasModal(item);
+}
+
+async function showProductoVentasModal(item) {
+  try {
+    // Get product for title context
+    const prod = await findProductByITEM(item);
+    const titulo = document.getElementById('productoVentasTitulo');
+    if (titulo) titulo.textContent = `Ventas del producto: ${prod?.nombre || item} (${item})`;
+
+    // Fetch all sales_items entries for this item
+    const { data: si, error: siErr } = await supabase
+      .from('sales_items')
+      .select('*')
+      .ilike('item', item)
+      .order('id', { ascending: true });
+    const body = document.getElementById('productoVentasBody');
+    if (siErr) { console.error(siErr); body.innerHTML = '<p>Error al cargar ventas del producto.</p>'; return openProductoVentasModal(); }
+    if (!si || si.length === 0) { body.innerHTML = '<p>No hay ventas registradas para este producto.</p>'; return openProductoVentasModal(); }
+
+    // Fetch related sales rows
+    const saleIds = Array.from(new Set(si.map(r => r.sale_id))).filter(Boolean);
+    const { data: sales, error: sErr } = await supabase
+      .from('sales')
+      .select('*')
+      .in('id', saleIds)
+      .order('fecha', { ascending: false });
+    if (sErr) { console.error(sErr); body.innerHTML = '<p>Error al cargar ventas del producto.</p>'; return openProductoVentasModal(); }
+    const salesMap = new Map((sales || []).map(s => [s.id, s]));
+
+    // Build rows combining sale info and quantities/prices per occurrence
+    const rows = si
+      .map(r => ({ r, s: salesMap.get(r.sale_id) }))
+      .filter(x => !!x.s)
+      .sort((a, b) => (new Date(b.s.fecha) - new Date(a.s.fecha)) || (b.s.id - a.s.id));
+
+    if (rows.length === 0) { body.innerHTML = '<p>No hay ventas válidas encontradas para este producto.</p>'; return openProductoVentasModal(); }
+
+    // Detect anuladas: by sales.estado and movements "Anulación comprobante <numero>"
+    const anuladasSet = new Set((sales || []).filter(s => s.estado === 'anulada').map(s => String(s.numero)));
+    try {
+      const saleNumbers = Array.from(new Set((sales || []).map(s => String(s.numero))));
+      if (saleNumbers.length) {
+        const detalles = saleNumbers.map(n => `Anulación comprobante ${n}`);
+        const { data: annMovs } = await supabase.from('movements').select('detalle').in('detalle', detalles);
+        if (Array.isArray(annMovs)) {
+          annMovs.forEach(m => {
+            const n = String(m.detalle || '').replace('Anulación comprobante ', '');
+            if (n) anuladasSet.add(n);
+          });
+        }
+      }
+    } catch (annErr) { console.warn('annul detect warn', annErr); }
+
+    const nonAnuladasRows = rows.filter(({ s }) => !anuladasSet.has(String(s.numero)) && s.estado !== 'anulada');
+    const totalCantidad = nonAnuladasRows.reduce((acc, x) => acc + (x.r.cantidad || 0), 0);
+    const totalMonto = nonAnuladasRows.reduce((acc, x) => acc + (x.r.subtotal || (x.r.cantidad * x.r.precio) || 0), 0);
+
+    body.innerHTML = `
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>N°</th>
+              <th>Cliente</th>
+              <th>Cantidad</th>
+              <th>Precio</th>
+              <th>Subtotal</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(({ r, s }) => {
+              const isAnulada = anuladasSet.has(String(s.numero)) || s.estado === 'anulada';
+              const cls = isAnulada ? 'venta-anulada' : '';
+              return `
+              <tr class="${cls}">
+                <td>${s.fecha || ''}</td>
+                <td>${s.numero || ''}</td>
+                <td>${s.cliente || ''}</td>
+                <td>${r.cantidad ?? ''}</td>
+                <td>${fmt(r.precio ?? 0)}</td>
+                <td>${fmt((r.subtotal ?? (r.cantidad * r.precio)) || 0)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="3" style="text-align:right"><strong>Totales:</strong></td>
+              <td><strong>${totalCantidad}</strong></td>
+              <td></td>
+              <td><strong>${fmt(totalMonto)}</strong></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <p class="note">Las filas en rojo pertenecen a ventas anuladas y no se suman a los totales.</p>
+    `;
+
+    openProductoVentasModal();
+  } catch (e) {
+    console.error('producto ventas modal error', e);
+    const body = document.getElementById('productoVentasBody');
+    if (body) body.innerHTML = '<p>Error inesperado al cargar las ventas del producto.</p>';
+    openProductoVentasModal();
+  }
+}
+
+function openProductoVentasModal() {
+  const modal = document.getElementById('productoVentasModal');
+  if (!modal) return;
+  modal.hidden = false;
+  // Wire close buttons
+  modal.querySelectorAll('.modal-close').forEach(btn => btn.onclick = () => { modal.hidden = true; });
 }
 
 async function applyFilters() {
