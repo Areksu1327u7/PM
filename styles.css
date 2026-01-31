@@ -114,6 +114,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .comp-table td { border: 1px solid var(--border); padding: 8px; }
 .comp-total-label { text-align: right; font-weight: 700; }
 .comp-total-value { font-weight: 800; color: var(--ink-700); }
+/* Celeste highlight for venta comprobantes */
+.comprobante-venta .brand-title { color: var(--blue-700); }
+.comprobante-venta .comp-total-value { color: var(--blue-700); }
 .comp-footer { margin-top: 12px; display: flex; justify-content: space-between; color: var(--ink-500); font-size: 12px; }
 .comp-note { font-style: italic; }
 
@@ -197,6 +200,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .comp-table td { border: 1px solid #e5e7eb; padding: 8px; }
 .comp-total-label { text-align: right; font-weight: 700; }
 .comp-total-value { font-weight: 800; color: #0b3a77; }
+/* Celeste highlight for venta comprobantes (lower block) */
+.comprobante-venta .brand-title { color: #2563eb; }
+.comprobante-venta .comp-total-value { color: #2563eb; }
 .comp-footer { margin-top: 12px; display: flex; justify-content: space-between; color: #5b6a85; font-size: 12px; }
 .comp-note { font-style: italic; }
 

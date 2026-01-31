@@ -373,7 +373,7 @@ function renderComprobante(tipo, mov, targetBody, container) {
   const entidadLabel = esIngreso ? 'Proveedor' : 'Cliente';
 
   targetBody.innerHTML = `
-    <div class="comprobante-doc">
+    <div class="comprobante-doc ${esIngreso ? 'comprobante-ingreso' : 'comprobante-venta'}">
       <div class="comp-brand">
         <div class="brand-left">
           <div class="brand-title">IMPORTACIONES MB</div>
@@ -441,7 +441,10 @@ async function descargarComprobantePDF(tipo, options = {}) {
     // Marca
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(16);
-    doc.text('IMPORTACIONES MB', 40, y); y += 18;
+    if (!esIngreso) { doc.setTextColor(59, 130, 246); }
+    doc.text('IMPORTACIONES MB', 40, y);
+    doc.setTextColor(0, 0, 0);
+    y += 18;
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(11);
     doc.text(esIngreso ? 'Comprobante de Ingreso' : 'Comprobante de Venta', 40, y);
@@ -486,7 +489,9 @@ async function descargarComprobantePDF(tipo, options = {}) {
     });
     const afterTableY = doc.lastAutoTable.finalY || (y + 40);
     doc.setFont('helvetica', 'bold');
+    if (!esIngreso) { doc.setTextColor(59, 130, 246); }
     doc.text(`Total: ${fmt(payload.total)}`, pageWidth - 40, afterTableY + 24, { align: 'right' });
+    doc.setTextColor(0, 0, 0);
 
     const fileName = `${esIngreso ? 'Ingreso' : 'Venta'}_${payload.comprobante.numero}.pdf`;
     if (options.autoPrint) {
