@@ -98,6 +98,164 @@ const adminAgregarRol = document.getElementById('adminAgregarRol');
 const adminGuardar = document.getElementById('adminGuardar');
 const adminTabla = document.getElementById('adminTabla');
 
+// Admin configs & tools
+const cfgBrandName = document.getElementById('cfgBrandName');
+const cfgCoverageDays = document.getElementById('cfgCoverageDays');
+const cfgGuardar = document.getElementById('cfgGuardar');
+const exportProductosBtn = document.getElementById('exportProductos');
+const exportMovimientosBtn = document.getElementById('exportMovimientos');
+const exportVentasBtn = document.getElementById('exportVentas');
+const exportVentasItemsBtn = document.getElementById('exportVentasItems');
+const bulkCatSelect = document.getElementById('bulkCatSelect');
+const bulkPercentInput = document.getElementById('bulkPercent');
+const bulkApplyBtn = document.getElementById('bulkApply');
+
+// Global Settings
+const SETTINGS_KEY = 'appSettings';
+function getSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    const s = raw ? JSON.parse(raw) : {};
+    return {
+      brandName: s.brandName || 'IMPORTACIONES MB',
+      coverageDays: Number(s.coverageDays || 14)
+    };
+  } catch { return { brandName: 'IMPORTACIONES MB', coverageDays: 14 }; }
+}
+function saveSettings(s) {
+  const cur = getSettings();
+  const merged = { ...cur, ...s };
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
+}
+function initAdminSettingsUI() {
+  const s = getSettings();
+  if (cfgBrandName) cfgBrandName.value = s.brandName || '';
+  if (cfgCoverageDays) cfgCoverageDays.value = String(s.coverageDays || 14);
+}
+cfgGuardar?.addEventListener('click', () => {
+  const brand = (cfgBrandName?.value || '').trim() || 'IMPORTACIONES MB';
+  let cov = parseInt(cfgCoverageDays?.value || '14', 10);
+  if (!Number.isFinite(cov) || cov <= 0) cov = 14;
+  saveSettings({ brandName: brand, coverageDays: cov });
+  alert('Configuraciones guardadas.');
+  refreshDashboard();
+});
+
+async function populateBulkCategories() {
+  try {
+    const list = await allProducts();
+    const cats = Array.from(new Set(list.map(p => (p.categoria || 'General')))).sort();
+    if (bulkCatSelect) {
+      bulkCatSelect.innerHTML = '<option value="">Seleccione</option>' + cats.map(c => `<option value="${c}">${c}</option>`).join('');
+    }
+  } catch (e) { console.warn('bulk cats warn', e); }
+}
+bulkApplyBtn?.addEventListener('click', async () => {
+  const cat = bulkCatSelect?.value || '';
+  const pct = parseFloat(bulkPercentInput?.value || '0');
+  if (!cat) { alert('Seleccione una categoría'); return; }
+  if (!Number.isFinite(pct)) { alert('Ingrese un porcentaje válido'); return; }
+  const sign = pct >= 0 ? '+' : '';
+  if (!confirm(`Aplicar ${sign}${pct}% a precios de la categoría "${cat}"?`)) return;
+  try {
+    const list = await allProducts();
+    const targets = list.filter(p => (p.categoria || 'General') === cat);
+    let updated = 0;
+    for (const p of targets) {
+      const newPrice = Math.max(0, Number((p.precio || 0) * (1 + pct/100)).toFixed(2));
+      const { error } = await supabase.from('products').update({ precio: newPrice }).eq('id', p.id);
+      if (!error) updated++;
+    }
+    await refreshInventoryUI();
+    alert(`Ajuste completado. Productos actualizados: ${updated}.`);
+  } catch (err) { console.error('bulk price error', err); alert('No se pudo aplicar el ajuste.'); }
+});
+
+// Admin Exports
+exportProductosBtn?.addEventListener('click', async () => {
+  try {
+    if (!window.XLSX) { alert('Exportador Excel no disponible.'); return; }
+    const list = await allProducts();
+    if (!list || !list.length) { alert('No hay productos para exportar.'); return; }
+    const data = list.map(p => ({
+      'ITEM': p.item,
+      'Nombre': p.nombre,
+      'Categoría': p.categoria || 'General',
+      'CEJA': p.ceja ?? 0,
+      'SENKATA': p.senkata ?? 0,
+      'Unidad': p.unidad || 'PCS',
+      'Precio (Bs)': Number(p.precio ?? 0)
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Productos');
+    XLSX.writeFile(wb, `Productos_${new Date().toISOString().slice(0,10)}.xlsx`);
+  } catch (e) { console.error('export productos', e); alert('No se pudo exportar productos.'); }
+});
+exportMovimientosBtn?.addEventListener('click', async () => {
+  try {
+    if (!window.XLSX) { alert('Exportador Excel no disponible.'); return; }
+    const list = await allMovements();
+    if (!list || !list.length) { alert('No hay movimientos para exportar.'); return; }
+    const data = list.map(m => ({
+      'Fecha': m.fecha,
+      'Tipo': m.tipo,
+      'ITEM': m.item || '',
+      'Nombre': m.nombre || '',
+      'Cantidad': m.cantidad || 0,
+      'Detalle': m.detalle || '',
+      'Total (Bs)': Number(m.total || 0),
+      'Descuento (Bs)': Number(m.descuento || 0)
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Movimientos');
+    XLSX.writeFile(wb, `Movimientos_${new Date().toISOString().slice(0,10)}.xlsx`);
+  } catch (e) { console.error('export movs', e); alert('No se pudo exportar movimientos.'); }
+});
+exportVentasBtn?.addEventListener('click', async () => {
+  try {
+    if (!window.XLSX) { alert('Exportador Excel no disponible.'); return; }
+    const { data } = await supabase.from('sales').select('*').order('fecha',{ascending:false});
+    const list = data || [];
+    if (!list.length) { alert('No hay ventas para exportar.'); return; }
+    const sheetData = list.map(s => ({
+      'Fecha': s.fecha,
+      'N°': s.numero,
+      'Cliente': s.cliente,
+      'Subtotal (Bs)': Number(s.subtotal || 0),
+      'Descuento (%)': Number(s.descuento_pct || 0),
+      'Descuento (Bs)': Number(s.descuento || 0),
+      'Total (Bs)': Number(s.total || 0),
+      'Estado': s.estado || 'vigente'
+    }));
+    const ws = XLSX.utils.json_to_sheet(sheetData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Ventas');
+    XLSX.writeFile(wb, `Ventas_${new Date().toISOString().slice(0,10)}.xlsx`);
+  } catch (e) { console.error('export ventas', e); alert('No se pudo exportar ventas.'); }
+});
+exportVentasItemsBtn?.addEventListener('click', async () => {
+  try {
+    if (!window.XLSX) { alert('Exportador Excel no disponible.'); return; }
+    const { data } = await supabase.from('sales_items').select('*').order('id',{ascending:true});
+    const list = data || [];
+    if (!list.length) { alert('No hay items de ventas para exportar.'); return; }
+    const sheetData = list.map(r => ({
+      'Venta ID': r.sale_id,
+      'ITEM': r.item,
+      'Nombre': r.nombre,
+      'Cantidad': r.cantidad || 0,
+      'Precio (Bs)': Number(r.precio || 0),
+      'Subtotal (Bs)': Number(r.subtotal || 0)
+    }));
+    const ws = XLSX.utils.json_to_sheet(sheetData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'VentasItems');
+    XLSX.writeFile(wb, `VentasItems_${new Date().toISOString().slice(0,10)}.xlsx`);
+  } catch (e) { console.error('export ventas items', e); alert('No se pudo exportar los ítems de ventas.'); }
+});
+
 // Utilidades de productos (Supabase)
 async function allProducts() {
   const { data, error } = await supabase.from('products').select('*').order('nombre', { ascending: true });
@@ -358,6 +516,7 @@ function printComprobante(sourceEl) {
 // Render comprobante
 function renderComprobante(tipo, mov, targetBody, container) {
   const esIngreso = tipo === 'ingreso';
+  const brand = getSettings().brandName || 'IMPORTACIONES MB';
   const cols = esIngreso ? '<th>SKU</th><th>Nombre</th><th>Categoría</th><th>Cantidad</th><th>Precio Compra</th><th>Subtotal</th>'
                          : '<th>SKU</th><th>Nombre</th><th>Cantidad</th><th>Precio Venta</th><th>Subtotal</th>';
   const rows = mov.items.map(it => {
@@ -377,7 +536,7 @@ function renderComprobante(tipo, mov, targetBody, container) {
     <div class="comprobante-doc ${esIngreso ? 'comprobante-ingreso' : 'comprobante-venta'}">
       <div class="comp-brand">
         <div class="brand-left">
-          <div class="brand-title">IMPORTACIONES MB</div>
+          <div class="brand-title">${brand}</div>
           <div class="brand-sub">${tipoLabel}</div>
         </div>
         <div class="brand-right">
@@ -433,6 +592,7 @@ async function descargarComprobantePDF(tipo, options = {}) {
     const payload = lastComprobante && lastComprobante.tipo === tipo ? lastComprobante.mov : null;
     if (!payload) { alert('No hay comprobante disponible para exportar.'); return; }
     const esIngreso = tipo === 'ingreso';
+    const brand = getSettings().brandName || 'IMPORTACIONES MB';
     const jspdfNS = window.jspdf || {};
     const jsPDF = jspdfNS.jsPDF;
     if (!jsPDF || !window.jspdf) { alert('Generador PDF no disponible.'); return; }
@@ -443,7 +603,7 @@ async function descargarComprobantePDF(tipo, options = {}) {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(16);
     if (!esIngreso) { doc.setTextColor(59, 130, 246); }
-    doc.text('IMPORTACIONES MB', 40, y);
+    doc.text(String(brand || 'IMPORTACIONES MB'), 40, y);
     doc.setTextColor(0, 0, 0);
     y += 18;
     doc.setFont('helvetica', 'normal');
@@ -1583,6 +1743,73 @@ async function refreshDashboard() {
   if (kpiValorInventario) kpiValorInventario.textContent = fmt(valorInventario);
   if (kpiVentasHoy) kpiVentasHoy.textContent = fmt(ventasHoy);
   if (kpiIngresosHoy) kpiIngresosHoy.textContent = fmt(ingresosHoy);
+
+  // Reabastecimiento sugerido (predicción simple)
+  try {
+    const tbody = document.getElementById('reabastTabla')?.querySelector('tbody');
+    const card = document.getElementById('cardReabastecimiento');
+    if (tbody) {
+      // Ventana de 30 días
+      const today = new Date();
+      const since = new Date(today.getTime() - 30*24*60*60*1000);
+      const fmtDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      const { data: recentSales, error: salesErr } = await supabase.from('sales').select('id,fecha').gte('fecha', fmtDate(since)).lte('fecha', fmtDate(today)).order('fecha', { ascending: false }).limit(5000);
+      if (salesErr || !recentSales || !recentSales.length) { tbody.innerHTML = '<tr><td colspan="6">Sin datos suficientes de ventas recientes.</td></tr>'; if (card) card.hidden = false; return; }
+      const saleIds = recentSales.map(s => s.id);
+      // Fetch sales_items in chunks
+      let itemsRows = [];
+      const chunkSize = 200;
+      for (let i = 0; i < saleIds.length; i += chunkSize) {
+        const chunk = saleIds.slice(i, i + chunkSize);
+        const { data: siChunk, error: siErr } = await supabase.from('sales_items').select('sale_id,item,cantidad').in('sale_id', chunk);
+        if (!siErr && siChunk) itemsRows = itemsRows.concat(siChunk);
+      }
+      if (!itemsRows.length) { tbody.innerHTML = '<tr><td colspan="6">No hay ventas por producto registradas en el período.</td></tr>'; if (card) card.hidden = false; return; }
+      // Sum quantities per item
+      const qtyByItem = {};
+      itemsRows.forEach(r => { qtyByItem[r.item] = (qtyByItem[r.item] || 0) + (r.cantidad || 0); });
+      const daysWindow = 30;
+      // Build predictions
+      const prodMap = new Map(products.map(p => [p.item, p]));
+      const preds = Object.keys(qtyByItem).map(item => {
+        const p = prodMap.get(item);
+        if (!p) return null;
+        const avgPerDay = qtyByItem[item] / daysWindow;
+        const stock = (p.ceja || 0) + (p.senkata || 0);
+        const daysLeft = avgPerDay > 0 ? (stock / avgPerDay) : Infinity;
+        const coverageDays = getSettings().coverageDays || 14;
+        const suggested = avgPerDay > 0 ? Math.max(0, Math.ceil(avgPerDay * coverageDays - stock)) : 0; // cobertura configurable
+        return { item, nombre: p.nombre, stock, avgPerDay, daysLeft, suggested };
+      }).filter(Boolean)
+        .filter(x => x.avgPerDay > 0)
+        .sort((a,b) => a.daysLeft - b.daysLeft);
+
+      // Show only those under threshold (<= 7 días restantes)
+      const alerts = preds.filter(x => x.daysLeft <= 7);
+      if (!alerts.length) { tbody.innerHTML = '<tr><td colspan="6">Sin alertas. Stock con cobertura suficiente.</td></tr>'; if (card) card.hidden = false; return; }
+      tbody.innerHTML = alerts.map(a => {
+        const cls = a.daysLeft <= 2 ? 'stock-critico' : 'stock-alerta';
+        const badgeCls = a.daysLeft <= 2 ? 'badge badge-critical' : (a.daysLeft <= 7 ? 'badge badge-alert' : 'badge badge-ok');
+        const agotStr = a.daysLeft === Infinity ? '-' : `${a.daysLeft.toFixed(1)} días`;
+        return `
+          <tr class="${cls}">
+            <td>${a.item}</td>
+            <td>${a.nombre}</td>
+            <td>${a.stock}</td>
+            <td>${a.avgPerDay.toFixed(2)}</td>
+            <td><span class="${badgeCls}">${agotStr}</span></td>
+            <td>${a.suggested}</td>
+            <td><button type="button" class="secondary btn-ver-ventas-prod" data-item="${a.item}">Ver ventas</button></td>
+          </tr>`;
+      }).join('');
+      // Wire product sales quick view
+      tbody.querySelectorAll('.btn-ver-ventas-prod').forEach(btn => btn.addEventListener('click', (ev) => {
+        const item = ev.currentTarget.dataset.item;
+        showProductoVentasModal(item);
+      }));
+      if (card) card.hidden = false;
+    }
+  } catch (e) { console.warn('reabastecimiento panel warn', e); }
 }
 
 // Movimientos UI
@@ -1710,6 +1937,8 @@ movLimpiar?.addEventListener('click', () => { formMov.reset(); if (movItemsTbody
   await refreshMovDatalist();
   await refreshMovimientosTable();
   await refreshVentasHistorial();
+  initAdminSettingsUI();
+  populateBulkCategories();
   if (movItemsTbody && movItemsTbody.children.length === 0) {
     movItemsTbody.appendChild(newMovRow());
   }

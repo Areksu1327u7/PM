@@ -93,6 +93,26 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .table tbody tr.venta-anulada { background: #fff1f2; }
 .table tbody tr.venta-anulada:hover { background: #ffe4e6; }
 
+/* Reabastecimiento suggested highlights */
+.table tbody tr.stock-critico { background: #fff1f2; }
+.table tbody tr.stock-critico:hover { background: #ffe4e6; }
+.table tbody tr.stock-alerta { background: #fff7ed; }
+.table tbody tr.stock-alerta:hover { background: #ffedd5; }
+
+/* Badges and legend for reabastecimiento */
+.badge { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.badge-critical { background: #fee2e2; color: #991b1b; border: 1px solid #ef4444; }
+.badge-alert { background: #ffedd5; color: #9a3412; border: 1px solid #f59e0b; }
+.badge-ok { background: #dcfce7; color: #166534; border: 1px solid #22c55e; }
+.legend { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.note.small { font-size: 12px; color: #5b6a85; }
+
+/* Align numeric columns in reabastecimiento table */
+#reabastTabla td:nth-child(3),
+#reabastTabla td:nth-child(4),
+#reabastTabla td:nth-child(5),
+#reabastTabla td:nth-child(6) { text-align: right; }
+
 .note { font-size: 12px; color: #5b6a85; }
 .app-footer { text-align: center; padding: 24px; color: #5b6a85; }
 

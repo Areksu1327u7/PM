@@ -340,6 +340,33 @@
         </div>
       </div>
 
+      <div class="card" id="cardReabastecimiento">
+        <h3>Reabastecimiento Sugerido</h3>
+        <div class="legend">
+          <span class="badge badge-critical">Crítico ≤ 2 días</span>
+          <span class="badge badge-alert">Alerta ≤ 7 días</span>
+          <span class="badge badge-ok">Suficiente > 7 días</span>
+          <span class="note small">Cobertura objetivo: 14 días</span>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="reabastTabla">
+            <thead>
+              <tr>
+                <th>ITEM</th>
+                <th>Nombre</th>
+                <th>Stock</th>
+                <th>Ventas/día</th>
+                <th>Se agota en (días)</th>
+                <th>Sugerido (unidades)</th>
+                <th>Detalles</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="note">Estimación basada en promedio de ventas de los últimos 30 días.</p>
+      </div>
+
       <div class="card">
         <h3>Ventas Acumuladas (últimos 30 días)</h3>
         <canvas id="chartVentasAcumuladas"></canvas>
@@ -364,6 +391,52 @@
           </table>
         </div>
         <p class="note">Nota: de momento esta página está abierta a todos; la matriz no restringe acceso aún, solo documenta roles/permisos.</p>
+      </div>
+
+      <!-- Configuraciones generales -->
+      <div class="card" id="adminConfigCard">
+        <h3>Configuraciones Generales</h3>
+        <div class="grid-3">
+          <label>Nombre de Empresa
+            <input type="text" id="cfgBrandName" placeholder="Ej: Importaciones MB" />
+          </label>
+          <label>Cobertura objetivo (días)
+            <input type="number" id="cfgCoverageDays" min="1" step="1" placeholder="14" />
+          </label>
+          <div class="actions" style="align-self:end">
+            <button type="button" id="cfgGuardar" class="primary">Guardar Configuraciones</button>
+          </div>
+        </div>
+        <p class="note">El nombre de empresa se usa en el encabezado y comprobantes. La cobertura determina el cálculo de unidades sugeridas en reabastecimiento.</p>
+      </div>
+
+      <!-- Exportar datos -->
+      <div class="card" id="adminExportCard">
+        <h3>Exportar Datos</h3>
+        <div class="actions" style="flex-wrap:wrap">
+          <button type="button" id="exportProductos" class="secondary">Productos (Excel)</button>
+          <button type="button" id="exportMovimientos" class="secondary">Movimientos (Excel)</button>
+          <button type="button" id="exportVentas" class="secondary">Ventas (Excel)</button>
+          <button type="button" id="exportVentasItems" class="secondary">Ventas - Items (Excel)</button>
+        </div>
+        <p class="note">Se descargarán archivos .xlsx con los datos actuales.</p>
+      </div>
+
+      <!-- Ajuste masivo de precios -->
+      <div class="card" id="adminBulkPriceCard">
+        <h3>Ajuste Masivo de Precios</h3>
+        <div class="grid-3">
+          <label>Categoría
+            <select id="bulkCatSelect"><option value="">Seleccione</option></select>
+          </label>
+          <label>Porcentaje (%)
+            <input type="number" id="bulkPercent" step="0.01" placeholder="Ej: 5 para +5% o -10 para -10%" />
+          </label>
+          <div class="actions" style="align-self:end">
+            <button type="button" id="bulkApply" class="primary">Aplicar ajuste</button>
+          </div>
+        </div>
+        <p class="note">Ajusta el precio de todos los productos de la categoría seleccionada. Se requiere confirmación.</p>
       </div>
     </section>
   </main>
