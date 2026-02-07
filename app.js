@@ -1063,6 +1063,8 @@ async function onEditProduct(e) {
   const item = tr.dataset.item;
   const list = await allProducts();
   const p = list.find(x => x.item === item);
+  // Expand UI for clearer editing (no horizontal slide)
+  document.querySelector('.container')?.classList.add('edit-expanded');
   tr.innerHTML = `
     <td>${p.item}</td>
     <td><input type="text" value="${p.nombre}" class="edit-nombre" /></td>
@@ -1089,8 +1091,10 @@ async function onEditProduct(e) {
     };
     await upsertProduct(updated);
     await refreshInventoryUI();
+    // Restore normal width after finishing edit
+    document.querySelector('.container')?.classList.remove('edit-expanded');
   });
-  tr.querySelector('.btn-cancel').addEventListener('click', () => refreshInventoryUI());
+  tr.querySelector('.btn-cancel').addEventListener('click', () => { refreshInventoryUI(); document.querySelector('.container')?.classList.remove('edit-expanded'); });
 }
 // Ventas: historial
 const ventasHistTablaBody = document.getElementById('ventasHistTabla')?.querySelector('tbody');
