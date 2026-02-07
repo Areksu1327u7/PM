@@ -89,6 +89,7 @@ const invStockMin = document.getElementById('invStockMin');
 const invStockMax = document.getElementById('invStockMax');
 const invAplicar = document.getElementById('invAplicar');
 const invReiniciar = document.getElementById('invReiniciar');
+const invExportExcel = document.getElementById('invExportExcel');
 const invTabla = document.getElementById('invTabla').querySelector('tbody');
 
 // Admin
@@ -857,6 +858,45 @@ async function applyFilters() {
 
 invAplicar.addEventListener('click', (e) => { e.preventDefault(); applyFilters(); });
 invReiniciar.addEventListener('click', (e) => { e.preventDefault(); invBuscar.value=''; invCategoria.value=''; invStockMin.value=''; invStockMax.value=''; refreshInventoryUI(); });
+
+// Exportar inventario a Excel (xlsx)
+invExportExcel?.addEventListener('click', async () => {
+  try {
+    if (!window.XLSX) { alert('Exportador Excel no disponible.'); return; }
+    const list = await allProducts();
+    if (!list || list.length === 0) { alert('No hay datos de inventario para exportar.'); return; }
+    const data = list.map(p => ({
+      'ITEM': p.item,
+      'Nombre': p.nombre,
+      'Categoría': p.categoria || 'General',
+      'CEJA': p.ceja ?? 0,
+      'SENKATA': p.senkata ?? 0,
+      'Unidad': p.unidad || 'PCS',
+      'Precio (Bs)': Number(p.precio ?? 0)
+    }));
+    const ws = XLSX.utils.json_to_sheet(data, { header: ['ITEM','Nombre','Categoría','CEJA','SENKATA','Unidad','Precio (Bs)'] });
+    ws['!cols'] = [
+      { wch: 16 }, // ITEM
+      { wch: 28 }, // Nombre
+      { wch: 16 }, // Categoría
+      { wch: 10 }, // CEJA
+      { wch: 12 }, // SENKATA
+      { wch: 10 }, // Unidad
+      { wch: 12 }  // Precio
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = String(today.getMonth()+1).padStart(2,'0');
+    const d = String(today.getDate()).padStart(2,'0');
+    const fileName = `Inventario_${y}-${m}-${d}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+  } catch (e) {
+    console.error('excel export error', e);
+    alert('No se pudo generar el archivo Excel.');
+  }
+});
 
 async function onEditProduct(e) {
   const tr = e.target.closest('tr');

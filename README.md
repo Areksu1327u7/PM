@@ -21,9 +21,7 @@ También puede abrirlo directamente desde el Explorador de archivos.
 
 ## Notas
 
-- Para losDN de Chart.js; requiere conexión a Internet.
-- Esta es una demo 
-- Si desea persistencia real y multiusuario, se recomienda agregar un backend (por ejemplo Node.js + Express + SQLite/PostgreSQL).
+- Pssssssssrecomienda agregar un backend (por ejitL).
 
 ## no
 
