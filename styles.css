@@ -118,6 +118,67 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .note { font-size: 12px; color: #5b6a85; }
 .app-footer { text-align: center; padding: 24px; color: #5b6a85; }
 
+/* Inventory live sync indicator */
+.inv-live-status {
+  margin: 10px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--blue-100);
+  background: var(--blue-50);
+}
+.live-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 0 rgba(34,197,94,0.6);
+  animation: livePulse 1.8s infinite;
+}
+@keyframes livePulse {
+  0% { box-shadow: 0 0 0 0 rgba(34,197,94,0.5); }
+  70% { box-shadow: 0 0 0 8px rgba(34,197,94,0); }
+  100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+}
+
+/* FX Panel (USDT/BOB) */
+.fx-panel {
+  position: fixed;
+  right: 16px;
+  top: 110px;
+  width: 290px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 10px 24px rgba(0,0,0,0.12);
+  padding: 12px;
+  z-index: 90;
+}
+.fx-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.fx-header h3 { margin: 0; font-size: 16px; }
+.fx-grid { display: grid; gap: 8px; margin-top: 10px; }
+.fx-card { background: var(--blue-50); border: 1px solid var(--blue-100); border-radius: 10px; padding: 10px; }
+.fx-card-strong { border-color: var(--blue-500); }
+.fx-label { font-size: 12px; color: var(--ink-500); margin-bottom: 4px; }
+.fx-value { font-size: 20px; font-weight: 800; color: var(--ink-700); font-variant-numeric: tabular-nums; }
+.fx-meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; }
+
+/* Reserve room for the side panel on wide screens */
+@media (min-width: 1280px) {
+  .container { margin-right: 330px; }
+}
+
+/* Mobile/tablet: panel becomes inline */
+@media (max-width: 1279px) {
+  .fx-panel {
+    position: static;
+    width: auto;
+    margin: 0 24px 16px;
+  }
+}
+
 /* Comprobante visual */
 .comprobante h3 { margin-top: 0; }
 .comprobante .header { display: flex; justify-content: space-between; gap: 12px; }
@@ -234,4 +295,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   #printArea, #printArea * { visibility: visible; }
   #printArea { position: absolute; left: 0; right: 0; top: 0; }
   .comprobante-doc { box-shadow: none; border-radius: 0; border: none; }
+}
+
+/* Final override: keep room for FX panel on large screens */
+@media (min-width: 1280px) {
+  .container { margin-right: 330px !important; }
 }

@@ -3,6 +3,83 @@ const SUPABASE_URL = 'https://qmaftwvpbzzzdmuevelh.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtYWZ0d3ZwYnp6emRtdWV2ZWxoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5NjA2NTYsImV4cCI6MjA4MDUzNjY1Nn0.dEQkkAWdwAEGDhqSPcQuuBKSwMlmVQk9J2ws6eU7ti4';
 supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+let liveRefreshTimer = null;
+let productsRealtimeChannel = null;
+let currentSectionId = 'ingresoSection';
+let inventoryAutoRefreshTimer = null;
+const invLiveTextEl = document.getElementById('invLiveText');
+const invLiveTimeEl = document.getElementById('invLiveTime');
+const invLiveDotEl = document.getElementById('invLiveDot');
+
+function setInventoryLiveStatus(text, state = 'ok') {
+  if (invLiveTextEl) invLiveTextEl.textContent = text;
+  if (invLiveDotEl) {
+    invLiveDotEl.style.background = state === 'error' ? '#ef4444' : (state === 'syncing' ? '#f59e0b' : '#22c55e');
+  }
+}
+
+function markInventoryLiveSyncTime() {
+  if (!invLiveTimeEl) return;
+  const now = new Date();
+  invLiveTimeEl.textContent = `Última sync: ${now.toLocaleTimeString('es-BO')}`;
+}
+
+async function refreshInventoryLiveView() {
+  if (currentSectionId !== 'inventarioSection') return;
+  setInventoryLiveStatus('Sincronizando inventario...', 'syncing');
+  const hasFilters =
+    !!(invBuscar?.value || '').trim() ||
+    !!(invCategoria?.value || '') ||
+    !!(invStockMin?.value || '') ||
+    !!(invStockMax?.value || '');
+  try {
+    if (hasFilters) await applyFilters();
+    else await refreshInventoryUI();
+    setInventoryLiveStatus('Actualización en vivo activa', 'ok');
+    markInventoryLiveSyncTime();
+  } catch (e) {
+    setInventoryLiveStatus('Sincronización con retraso', 'error');
+    throw e;
+  }
+}
+
+function initInventoryAutoRefresh() {
+  if (inventoryAutoRefreshTimer) return;
+  inventoryAutoRefreshTimer = setInterval(async () => {
+    try {
+      await refreshInventoryLiveView();
+    } catch (e) {
+      console.warn('inventory auto-refresh warn', e);
+    }
+  }, 5000);
+}
+
+function scheduleLiveRefresh() {
+  if (liveRefreshTimer) clearTimeout(liveRefreshTimer);
+  liveRefreshTimer = setTimeout(async () => {
+    try {
+      await refreshInventoryLiveView();
+      await refreshMovDatalist();
+      await refreshDashboard();
+    } catch (e) {
+      console.warn('live refresh warn', e);
+    }
+  }, 250);
+}
+
+function initProductsRealtime() {
+  if (productsRealtimeChannel) return;
+  productsRealtimeChannel = supabase
+    .channel('realtime-products')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+      if (currentSectionId === 'inventarioSection') setInventoryLiveStatus('Cambio detectado. Actualizando...', 'syncing');
+      scheduleLiveRefresh();
+    })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') console.log('Realtime products: ON');
+    });
+}
+
 // Tablas esperadas:
 // products: { id, item, nombre, ceja, senkata, unidad, precio, categoria }
 // movements: { id, tipo ('ingreso'|'venta'|'transfer'), fecha, item, nombre, cantidad, detalle, total, descuento }
@@ -32,11 +109,117 @@ async function seedIfEmpty() {
 }
 seedIfEmpty();
 
+// Widget de tipo de cambio (USDT / BOB)
+const fxParallelBuyEl = document.getElementById('fxParallelBuy');
+const fxParallelSellEl = document.getElementById('fxParallelSell');
+const fxParallelMidEl = document.getElementById('fxParallelMid');
+const fxStatusEl = document.getElementById('fxStatus');
+const fxUpdatedAtEl = document.getElementById('fxUpdatedAt');
+const fxRefreshBtn = document.getElementById('fxRefreshBtn');
+
+function fxFmt(n, decimals = 4) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '--';
+  return v.toFixed(decimals);
+}
+
+function fxSetStatus(msg) {
+  if (fxStatusEl) fxStatusEl.textContent = msg;
+}
+
+function fxSetUpdatedNow() {
+  if (!fxUpdatedAtEl) return;
+  const now = new Date();
+  fxUpdatedAtEl.textContent = `Actualizado: ${now.toLocaleTimeString('es-BO')}`;
+}
+
+async function refreshFxWidget() {
+  if (!fxParallelBuyEl || !fxParallelSellEl || !fxParallelMidEl) return;
+  try {
+    fxSetStatus('Actualizando...');
+    if (fxRefreshBtn) fxRefreshBtn.disabled = true;
+
+    const p2pUrl = 'https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search';
+    const buildBody = (tradeType) => ({
+      proMerchantAds: false,
+      page: 1,
+      rows: 20,
+      payTypes: [],
+      countries: [],
+      publisherType: null,
+      fiat: 'BOB',
+      tradeType,
+      asset: 'USDT'
+    });
+
+    const [buyRes, sellRes] = await Promise.all([
+      fetch(p2pUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(buildBody('BUY')) }),
+      fetch(p2pUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(buildBody('SELL')) })
+    ]);
+
+    let buyPrice = NaN;
+    let sellPrice = NaN;
+
+    if (buyRes.ok && sellRes.ok) {
+      const buyData = await buyRes.json();
+      const sellData = await sellRes.json();
+      const toPrices = (arr) => (arr || [])
+        .map(x => Number(x?.adv?.price))
+        .filter(x => Number.isFinite(x) && x > 0)
+        .sort((a,b)=>a-b);
+
+      const buyPrices = toPrices(buyData?.data);
+      const sellPrices = toPrices(sellData?.data);
+      const median = (list) => {
+        if (!list.length) return NaN;
+        const mid = Math.floor(list.length / 2);
+        return list.length % 2 ? list[mid] : (list[mid - 1] + list[mid]) / 2;
+      };
+
+      buyPrice = median(buyPrices);
+      sellPrice = median(sellPrices);
+    }
+
+    // Fallback de mercado (no oficial bancario) si Binance P2P no responde o no hay anuncios
+    if (!Number.isFinite(buyPrice) || !Number.isFinite(sellPrice)) {
+      const fb = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=bob');
+      if (!fb.ok) throw new Error('Sin datos de Binance P2P ni fallback');
+      const fbData = await fb.json();
+      const usdtBobMarket = Number(fbData?.tether?.bob);
+      if (!Number.isFinite(usdtBobMarket)) throw new Error('Fallback inválido');
+      buyPrice = usdtBobMarket;
+      sellPrice = usdtBobMarket;
+      fxSetStatus('Mercado global (fallback)');
+    } else {
+      fxSetStatus('Paralelo P2P (Binance)');
+    }
+
+    const midPrice = (buyPrice + sellPrice) / 2;
+    fxParallelBuyEl.textContent = fxFmt(buyPrice, 4);
+    fxParallelSellEl.textContent = fxFmt(sellPrice, 4);
+    fxParallelMidEl.textContent = fxFmt(midPrice, 4);
+    fxSetUpdatedNow();
+  } catch (err) {
+    console.error('FX widget error', err);
+    fxSetStatus('Sin conexión (reintentando)');
+  } finally {
+    if (fxRefreshBtn) fxRefreshBtn.disabled = false;
+  }
+}
+
+fxRefreshBtn?.addEventListener('click', refreshFxWidget);
+
 // Navegación
-const navButtons = document.querySelectorAll('.nav-btn');
+const navButtons = document.querySelectorAll('.nav-btn[data-target]');
 navButtons.forEach(btn => btn.addEventListener('click', () => showSection(btn.dataset.target)));
 function showSection(id) {
+  currentSectionId = id;
   document.querySelectorAll('.page-section').forEach(s => s.hidden = s.id !== id);
+  const fxPanel = document.getElementById('fxPanel');
+  if (fxPanel) fxPanel.hidden = id !== 'dashboardSection';
+  if (id === 'inventarioSection') {
+    refreshInventoryLiveView();
+  }
 }
 // Ventas subview toggles and auto-number
 function genSaleNumber() {
@@ -477,6 +660,9 @@ formVenta.addEventListener('submit', async (e) => {
     venGuardarBtn.title = 'Guardado. Usa «Limpiar» para habilitar.';
   }
   alert('Venta guardada. Inventario actualizado.');
+  await refreshInventoryUI();
+  await refreshDashboard();
+  await refreshMovDatalist();
   await refreshVentasHistorial();
   setAutoSaleNumber();
 });
@@ -1935,6 +2121,8 @@ movLimpiar?.addEventListener('click', () => { formMov.reset(); if (movItemsTbody
 
 // Inicialización
 (async () => {
+  initProductsRealtime();
+  initInventoryAutoRefresh();
   await refreshInventoryUI();
   await renderAdminMatrix();
   await refreshDashboard();
@@ -1949,5 +2137,7 @@ movLimpiar?.addEventListener('click', () => { formMov.reset(); if (movItemsTbody
   movAddItemBtn?.addEventListener('click', () => {
     movItemsTbody.appendChild(newMovRow());
   });
+  await refreshFxWidget();
+  setInterval(refreshFxWidget, 30000);
 })();
 
