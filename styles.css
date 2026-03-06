@@ -165,6 +165,61 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .fx-value { font-size: 20px; font-weight: 800; color: var(--ink-700); font-variant-numeric: tabular-nums; }
 .fx-meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; }
 
+/* Movimientos agrupados */
+#movTabla details summary { cursor: pointer; color: var(--blue-700); font-weight: 600; }
+#movTabla details ul { color: var(--ink-600); }
+#movTabla .mov-group-detail {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--blue-100);
+  border-radius: 10px;
+  background: var(--blue-50);
+}
+#movTabla .mov-group-detail.editing {
+  border-color: var(--blue-500);
+  box-shadow: inset 0 0 0 1px rgba(59,130,246,0.25);
+}
+#movTabla .mov-group-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+#movTabla .mov-lines-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+#movTabla .mov-line-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+#movTabla .mov-line-item:last-child { border-bottom: none; }
+#movTabla .mov-line-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+#movTabla .mov-line-qty {
+  font-weight: 600;
+  color: var(--ink-700);
+}
+#movTabla .btn-delete-mov-line {
+  margin-left: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid #ef4444;
+  background: #fee2e2;
+  color: #991b1b;
+}
+#movTabla .btn-delete-mov-line:hover { background: #fecaca; }
+
 /* Reserve room for the side panel on wide screens */
 @media (min-width: 1280px) {
   .container { margin-right: 330px; }

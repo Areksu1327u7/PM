@@ -7,6 +7,8 @@ let liveRefreshTimer = null;
 let productsRealtimeChannel = null;
 let currentSectionId = 'ingresoSection';
 let inventoryAutoRefreshTimer = null;
+let inventoryEditLock = false;
+let inventoryPendingSync = false;
 const invLiveTextEl = document.getElementById('invLiveText');
 const invLiveTimeEl = document.getElementById('invLiveTime');
 const invLiveDotEl = document.getElementById('invLiveDot');
@@ -24,8 +26,29 @@ function markInventoryLiveSyncTime() {
   invLiveTimeEl.textContent = `Última sync: ${now.toLocaleTimeString('es-BO')}`;
 }
 
+function startInventoryEditLock() {
+  inventoryEditLock = true;
+  setInventoryLiveStatus('Edición en curso (sync pausada)', 'syncing');
+}
+
+async function endInventoryEditLock() {
+  inventoryEditLock = false;
+  if (inventoryPendingSync) {
+    inventoryPendingSync = false;
+    await refreshInventoryLiveView();
+  } else {
+    setInventoryLiveStatus('Actualización en vivo activa', 'ok');
+    markInventoryLiveSyncTime();
+  }
+}
+
 async function refreshInventoryLiveView() {
   if (currentSectionId !== 'inventarioSection') return;
+  if (inventoryEditLock) {
+    inventoryPendingSync = true;
+    setInventoryLiveStatus('Edición en curso (sync pausada)', 'syncing');
+    return;
+  }
   setInventoryLiveStatus('Sincronizando inventario...', 'syncing');
   const hasFilters =
     !!(invBuscar?.value || '').trim() ||
@@ -133,66 +156,159 @@ function fxSetUpdatedNow() {
   fxUpdatedAtEl.textContent = `Actualizado: ${now.toLocaleTimeString('es-BO')}`;
 }
 
+const FX_CACHE_KEY = 'fx_last_parallel_quote';
+
+function fxSaveCache(buyPrice, sellPrice, sourceLabel) {
+  try {
+    localStorage.setItem(FX_CACHE_KEY, JSON.stringify({
+      buyPrice,
+      sellPrice,
+      sourceLabel,
+      ts: Date.now()
+    }));
+  } catch {}
+}
+
+function fxLoadCache() {
+  try {
+    const raw = localStorage.getItem(FX_CACHE_KEY);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!Number.isFinite(Number(obj?.buyPrice)) || !Number.isFinite(Number(obj?.sellPrice))) return null;
+    return obj;
+  } catch { return null; }
+}
+
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 9000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function median(list) {
+  if (!list.length) return NaN;
+  const mid = Math.floor(list.length / 2);
+  return list.length % 2 ? list[mid] : (list[mid - 1] + list[mid]) / 2;
+}
+
+function extractP2PPrices(data) {
+  return (data || [])
+    .map(x => Number(x?.adv?.price))
+    .filter(x => Number.isFinite(x) && x > 0)
+    .sort((a, b) => a - b);
+}
+
+async function fetchParallelFromBinance() {
+  const endpoints = [
+    'https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search',
+    'https://www.binance.com/bapi/c2c/v2/friendly/c2c/adv/search'
+  ];
+  const buildBody = (tradeType) => ({
+    proMerchantAds: false,
+    page: 1,
+    rows: 20,
+    payTypes: [],
+    countries: [],
+    publisherType: null,
+    fiat: 'BOB',
+    tradeType,
+    asset: 'USDT'
+  });
+
+  for (const p2pUrl of endpoints) {
+    try {
+      const [buyRes, sellRes] = await Promise.all([
+        fetchJsonWithTimeout(p2pUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(buildBody('BUY'))
+        }),
+        fetchJsonWithTimeout(p2pUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(buildBody('SELL'))
+        })
+      ]);
+      if (!buyRes.ok || !sellRes.ok) continue;
+
+      const buyData = await buyRes.json();
+      const sellData = await sellRes.json();
+      const buyPrices = extractP2PPrices(buyData?.data);
+      const sellPrices = extractP2PPrices(sellData?.data);
+      const buyPrice = median(buyPrices);
+      const sellPrice = median(sellPrices);
+      if (Number.isFinite(buyPrice) && Number.isFinite(sellPrice)) {
+        return { buyPrice, sellPrice, source: 'Paralelo P2P (Binance)' };
+      }
+    } catch {
+      // prueba siguiente endpoint
+    }
+  }
+  return null;
+}
+
+async function fetchFallbackMarket() {
+  // 1) USDT/BOB directo
+  try {
+    const res = await fetchJsonWithTimeout('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=bob');
+    if (res.ok) {
+      const data = await res.json();
+      const p = Number(data?.tether?.bob);
+      if (Number.isFinite(p)) {
+        return { buyPrice: p, sellPrice: p, source: 'Mercado global (CoinGecko)' };
+      }
+    }
+  } catch {}
+
+  // 2) USDT/USD * USD/BOB
+  try {
+    const [usdtRes, bobRes] = await Promise.all([
+      fetchJsonWithTimeout('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=usd'),
+      fetchJsonWithTimeout('https://open.er-api.com/v6/latest/USD')
+    ]);
+    if (usdtRes.ok && bobRes.ok) {
+      const usdtData = await usdtRes.json();
+      const bobData = await bobRes.json();
+      const usdtUsd = Number(usdtData?.tether?.usd);
+      const usdBob = Number(bobData?.rates?.BOB);
+      const p = usdtUsd * usdBob;
+      if (Number.isFinite(p)) {
+        return { buyPrice: p, sellPrice: p, source: 'Mercado global (fallback)' };
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
 async function refreshFxWidget() {
   if (!fxParallelBuyEl || !fxParallelSellEl || !fxParallelMidEl) return;
   try {
     fxSetStatus('Actualizando...');
     if (fxRefreshBtn) fxRefreshBtn.disabled = true;
 
-    const p2pUrl = 'https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search';
-    const buildBody = (tradeType) => ({
-      proMerchantAds: false,
-      page: 1,
-      rows: 20,
-      payTypes: [],
-      countries: [],
-      publisherType: null,
-      fiat: 'BOB',
-      tradeType,
-      asset: 'USDT'
-    });
-
-    const [buyRes, sellRes] = await Promise.all([
-      fetch(p2pUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(buildBody('BUY')) }),
-      fetch(p2pUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(buildBody('SELL')) })
-    ]);
-
-    let buyPrice = NaN;
-    let sellPrice = NaN;
-
-    if (buyRes.ok && sellRes.ok) {
-      const buyData = await buyRes.json();
-      const sellData = await sellRes.json();
-      const toPrices = (arr) => (arr || [])
-        .map(x => Number(x?.adv?.price))
-        .filter(x => Number.isFinite(x) && x > 0)
-        .sort((a,b)=>a-b);
-
-      const buyPrices = toPrices(buyData?.data);
-      const sellPrices = toPrices(sellData?.data);
-      const median = (list) => {
-        if (!list.length) return NaN;
-        const mid = Math.floor(list.length / 2);
-        return list.length % 2 ? list[mid] : (list[mid - 1] + list[mid]) / 2;
-      };
-
-      buyPrice = median(buyPrices);
-      sellPrice = median(sellPrices);
+    let result = await fetchParallelFromBinance();
+    if (!result) result = await fetchFallbackMarket();
+    if (!result) {
+      const cached = fxLoadCache();
+      if (cached) {
+        result = {
+          buyPrice: Number(cached.buyPrice),
+          sellPrice: Number(cached.sellPrice),
+          source: `Sin conexión (mostrando último valor: ${cached.sourceLabel || 'cache'})`
+        };
+      }
     }
+    if (!result) throw new Error('Sin datos disponibles de tipo de cambio');
 
-    // Fallback de mercado (no oficial bancario) si Binance P2P no responde o no hay anuncios
-    if (!Number.isFinite(buyPrice) || !Number.isFinite(sellPrice)) {
-      const fb = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=bob');
-      if (!fb.ok) throw new Error('Sin datos de Binance P2P ni fallback');
-      const fbData = await fb.json();
-      const usdtBobMarket = Number(fbData?.tether?.bob);
-      if (!Number.isFinite(usdtBobMarket)) throw new Error('Fallback inválido');
-      buyPrice = usdtBobMarket;
-      sellPrice = usdtBobMarket;
-      fxSetStatus('Mercado global (fallback)');
-    } else {
-      fxSetStatus('Paralelo P2P (Binance)');
-    }
+    const { buyPrice, sellPrice, source } = result;
+    fxSetStatus(source);
+    fxSaveCache(buyPrice, sellPrice, source);
 
     const midPrice = (buyPrice + sellPrice) / 2;
     fxParallelBuyEl.textContent = fxFmt(buyPrice, 4);
@@ -1245,10 +1361,15 @@ invExportExcel?.addEventListener('click', async () => {
 });
 
 async function onEditProduct(e) {
+  if (inventoryEditLock) {
+    alert('Ya hay una edición en curso en inventario.');
+    return;
+  }
   const tr = e.target.closest('tr');
   const item = tr.dataset.item;
   const list = await allProducts();
   const p = list.find(x => x.item === item);
+  startInventoryEditLock();
   // Expand UI for clearer editing (no horizontal slide)
   document.querySelector('.container')?.classList.add('edit-expanded');
   tr.innerHTML = `
@@ -1279,8 +1400,13 @@ async function onEditProduct(e) {
     await refreshInventoryUI();
     // Restore normal width after finishing edit
     document.querySelector('.container')?.classList.remove('edit-expanded');
+    await endInventoryEditLock();
   });
-  tr.querySelector('.btn-cancel').addEventListener('click', () => { refreshInventoryUI(); document.querySelector('.container')?.classList.remove('edit-expanded'); });
+  tr.querySelector('.btn-cancel').addEventListener('click', async () => {
+    await refreshInventoryUI();
+    document.querySelector('.container')?.classList.remove('edit-expanded');
+    await endInventoryEditLock();
+  });
 }
 // Ventas: historial
 const ventasHistTablaBody = document.getElementById('ventasHistTabla')?.querySelector('tbody');
@@ -2071,21 +2197,179 @@ async function refreshMovDatalist() {
   const dl = document.getElementById('datalistMovItems');
   dl.innerHTML = list.map(p => `<option value="${p.item}">${p.nombre}</option>`).join('');
 }
+
+function createMovementBatchId() {
+  const ts = Date.now().toString(36).toUpperCase();
+  const rnd = String(Math.floor(100 + Math.random() * 900));
+  return `MOV-${ts}-${rnd}`;
+}
+
+function extractMovementBatchId(detalle = '') {
+  const m = String(detalle).match(/\[MOV:([A-Z0-9-]+)\]/i);
+  return m?.[1] || '';
+}
+
+function cleanMovementDetalle(detalle = '') {
+  return String(detalle).replace(/\s*\[MOV:[A-Z0-9-]+\]/i, '').trim();
+}
+
 async function refreshMovimientosTable() {
   const data = await allMovements();
   if (!movTablaBody) return;
   const transfers = (data || []).filter(m => m.tipo === 'transfer');
-  movTablaBody.innerHTML = transfers.length ? transfers.map(m => `
-    <tr>
-      <td>${m.fecha}</td>
-      <td>${m.tipo}</td>
-      <td>${m.item || ''}</td>
-      <td>${m.nombre || ''}</td>
-      <td>${m.cantidad || 0}</td>
-      <td>${m.detalle || ''}</td>
-      <td>${fmt(m.total || 0)}</td>
-    </tr>
-  `).join('') : `<tr><td colspan="7">No hay movimientos SENKATA → CEJA registrados.</td></tr>`;
+  if (!transfers.length) {
+    movTablaBody.innerHTML = `<tr><td colspan="7">No hay movimientos SENKATA → CEJA registrados.</td></tr>`;
+    return;
+  }
+
+  const groups = new Map();
+  for (const m of transfers) {
+    const key = String(m.fecha || '');
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        fecha: m.fecha,
+        tipo: m.tipo,
+        detalleBase: 'SENKATA → CEJA',
+        cantidadTotal: 0,
+        total: 0,
+        rows: [],
+        maxId: m.id || 0
+      });
+    }
+    const g = groups.get(key);
+    const batchId = extractMovementBatchId(m.detalle);
+    g.cantidadTotal += Number(m.cantidad || 0);
+    g.total += Number(m.total || 0);
+    g.rows.push({
+      id: Number(m.id || 0),
+      item: m.item || '',
+      nombre: m.nombre || '',
+      cantidad: Number(m.cantidad || 0),
+      batchId: batchId || ''
+    });
+    g.maxId = Math.max(g.maxId, Number(m.id || 0));
+  }
+
+  const grouped = Array.from(groups.values()).sort((a, b) => {
+    const d = String(b.fecha || '').localeCompare(String(a.fecha || ''));
+    if (d !== 0) return d;
+    return (b.maxId || 0) - (a.maxId || 0);
+  });
+
+  movTablaBody.innerHTML = grouped.map((g, idx) => {
+    const linesCount = g.rows.length;
+    const itemCell = `${linesCount} líneas`;
+    const nombreCell = 'Movimientos del día';
+    const detailsList = g.rows.map(r => `
+      <li class="mov-line-item">
+        <div class="mov-line-main">
+          <strong>${r.item}</strong>
+          <span>${r.nombre}</span>
+          <span class="mov-line-qty">Cantidad: ${r.cantidad}</span>
+          ${r.batchId ? `<span class="note">(${r.batchId})</span>` : ''}
+        </div>
+        <button type="button" class="btn-delete-mov-line" data-group-index="${idx}" data-mov-id="${r.id}" title="Eliminar esta línea y revertir stock" hidden>Eliminar</button>
+      </li>
+    `).join('');
+    const detailsHtml = `
+      <details>
+        <summary>Ver detalle del día (${linesCount})</summary>
+        <div class="mov-group-detail" data-group-index="${idx}">
+          <div class="mov-group-toolbar">
+            <button type="button" class="secondary btn-mov-edit" data-group-index="${idx}">Editar</button>
+            <button type="button" class="btn-mov-done" data-group-index="${idx}" hidden>Listo</button>
+          </div>
+          <ul class="mov-lines-list">${detailsList}</ul>
+        </div>
+      </details>
+    `;
+    return `
+      <tr>
+        <td>${g.fecha}</td>
+        <td>${g.tipo}</td>
+        <td>${itemCell}</td>
+        <td>${nombreCell}</td>
+        <td>${g.cantidadTotal}</td>
+        <td>${g.detalleBase}${detailsHtml}</td>
+        <td>${fmt(g.total || 0)}</td>
+      </tr>
+    `;
+  }).join('');
+
+  function setGroupEditMode(groupIndex, editing) {
+    const root = movTablaBody.querySelector(`.mov-group-detail[data-group-index="${groupIndex}"]`);
+    if (!root) return;
+    root.classList.toggle('editing', editing);
+    root.querySelectorAll('.btn-delete-mov-line').forEach(btn => { btn.hidden = !editing; });
+    const editBtn = root.querySelector('.btn-mov-edit');
+    const doneBtn = root.querySelector('.btn-mov-done');
+    if (editBtn) editBtn.hidden = editing;
+    if (doneBtn) doneBtn.hidden = !editing;
+  }
+
+  movTablaBody.querySelectorAll('.btn-mov-edit').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      const idx = ev.currentTarget.dataset.groupIndex;
+      setGroupEditMode(idx, true);
+    });
+  });
+
+  movTablaBody.querySelectorAll('.btn-mov-done').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      const idx = ev.currentTarget.dataset.groupIndex;
+      setGroupEditMode(idx, false);
+    });
+  });
+
+  movTablaBody.querySelectorAll('.btn-delete-mov-line').forEach(btn => {
+    btn.addEventListener('click', async (ev) => {
+      const id = Number(ev.currentTarget.dataset.movId || 0);
+      if (!id) return;
+      await deleteMovimientoLinea(id);
+    });
+  });
+}
+
+async function deleteMovimientoLinea(movId) {
+  if (!confirm('¿Eliminar esta línea del movimiento? Se revertirá el stock (CEJA - cantidad, SENKATA + cantidad).')) return;
+  try {
+    const { data: mov, error } = await supabase.from('movements').select('*').eq('id', movId).maybeSingle();
+    if (error || !mov) { alert('No se encontró la línea del movimiento.'); return; }
+    if (mov.tipo !== 'transfer') { alert('Solo se pueden editar líneas de tipo transferencia.'); return; }
+
+    const qty = Number(mov.cantidad || 0);
+    if (qty > 0 && mov.item) {
+      const p = await findProductByITEM(mov.item);
+      if (!p) { alert('No se encontró el producto asociado para revertir stock.'); return; }
+      if ((p.ceja || 0) < qty) {
+        alert(`No se puede eliminar: CEJA actual (${p.ceja || 0}) es menor que la cantidad a revertir (${qty}).`);
+        return;
+      }
+      await upsertProduct({
+        id: p.id,
+        item: p.item,
+        nombre: p.nombre,
+        categoria: p.categoria,
+        unidad: p.unidad || 'PCS',
+        precio: p.precio || 0,
+        ceja: (p.ceja || 0) - qty,
+        senkata: (p.senkata || 0) + qty
+      });
+    }
+
+    const { error: delErr } = await supabase.from('movements').delete().eq('id', movId);
+    if (delErr) { console.error('delete movement line error', delErr); alert('No se pudo eliminar la línea.'); return; }
+
+    await refreshInventoryUI();
+    await refreshMovimientosTable();
+    await refreshDashboard();
+    await refreshMovDatalist();
+    alert('Línea del movimiento eliminada correctamente.');
+  } catch (e) {
+    console.error('deleteMovimientoLinea error', e);
+    alert('Ocurrió un error al eliminar la línea del movimiento.');
+  }
 }
 
 formMov?.addEventListener('submit', async (e) => {
@@ -2094,6 +2378,7 @@ formMov?.addEventListener('submit', async (e) => {
   if (!fecha) { alert('Seleccione la fecha'); return; }
   const rows = Array.from(movItemsTbody?.querySelectorAll('tr') || []);
   if (!rows.length) { alert('Agregue al menos una línea'); return; }
+  const batchId = createMovementBatchId();
   let processed = 0;
   for (const tr of rows) {
     const item = tr.dataset.item || (tr.querySelector('.mov-item')?.value || '').trim();
@@ -2103,13 +2388,13 @@ formMov?.addEventListener('submit', async (e) => {
     if (!p) { alert(`Producto no encontrado: ${item}`); continue; }
     if ((p.senkata || 0) < cant) { alert(`SENKATA insuficiente para ${p.item} (${p.nombre}). Disp: ${p.senkata}`); continue; }
     await upsertProduct({ id: p.id, item: p.item, nombre: p.nombre, categoria: p.categoria, unidad: p.unidad || 'PCS', precio: p.precio || 0, ceja: (p.ceja || 0) + cant, senkata: (p.senkata || 0) - cant });
-    await addMovement({ tipo: 'transfer', fecha, item: p.item, nombre: p.nombre, cantidad: cant, detalle: 'SENKATA → CEJA', total: 0, descuento: 0 });
+    await addMovement({ tipo: 'transfer', fecha, item: p.item, nombre: p.nombre, cantidad: cant, detalle: `SENKATA → CEJA [MOV:${batchId}]`, total: 0, descuento: 0 });
     processed++;
   }
   await refreshInventoryUI();
   await refreshMovimientosTable();
   if (processed > 0) {
-    alert(`Movimientos registrados: ${processed}`);
+    alert(`Movimiento registrado: ${batchId} (${processed} líneas)`);
     movItemsTbody.innerHTML = '';
     movItemsTbody.appendChild(newMovRow());
   } else {
