@@ -7,7 +7,7 @@ let liveRefreshTimer = null;
 let productsRealtimeChannel = null;
 let currentSectionId = 'ingresoSection';
 let inventoryAutoRefreshTimer = null;
-let inventoryEditLock = false;
+let inventoryEditingItems = new Set();
 let inventoryPendingSync = false;
 const invLiveTextEl = document.getElementById('invLiveText');
 const invLiveTimeEl = document.getElementById('invLiveTime');
@@ -26,27 +26,179 @@ function markInventoryLiveSyncTime() {
   invLiveTimeEl.textContent = `Última sync: ${now.toLocaleTimeString('es-BO')}`;
 }
 
-function startInventoryEditLock() {
-  inventoryEditLock = true;
-  setInventoryLiveStatus('Edición en curso (sync pausada)', 'syncing');
+function startInventoryEditItem(item) {
+  inventoryEditingItems.add(item);
+  setInventoryLiveStatus('Modo Edición activo — sync pausada', 'syncing');
+  updateEditModeUI();
 }
 
-async function endInventoryEditLock() {
-  inventoryEditLock = false;
-  if (inventoryPendingSync) {
-    inventoryPendingSync = false;
-    await refreshInventoryLiveView();
-  } else {
-    setInventoryLiveStatus('Actualización en vivo activa', 'ok');
-    markInventoryLiveSyncTime();
+async function endInventoryEditItem(item) {
+  inventoryEditingItems.delete(item);
+  updateEditModeUI();
+  if (inventoryEditingItems.size === 0) {
+    if (inventoryPendingSync) {
+      inventoryPendingSync = false;
+      await refreshInventoryLiveView();
+    } else {
+      setInventoryLiveStatus('Actualización en vivo activa', 'ok');
+      markInventoryLiveSyncTime();
+    }
   }
+}
+
+let inventoryEditMode = false;
+let inventoryOriginalData = new Map(); // item -> original product data
+
+function updateEditModeUI() {
+  const banner = document.getElementById('invEditBanner');
+  const floatingBar = document.getElementById('invFloatingBar');
+  const toggleBtn = document.getElementById('invEditModeToggle');
+  const table = document.getElementById('invTabla');
+  const changeCount = document.getElementById('invChangeCount');
+
+  if (inventoryEditMode) {
+    banner?.classList.add('visible');
+    toggleBtn?.classList.add('active');
+    toggleBtn && (toggleBtn.textContent = '✏️ Editando...');
+    table?.classList.add('inv-editable');
+
+    // Count changes
+    const count = countInventoryChanges();
+    if (changeCount) changeCount.textContent = count === 1 ? '1 cambio' : `${count} cambios`;
+    if (floatingBar) floatingBar.classList.toggle('visible', true);
+  } else {
+    banner?.classList.remove('visible');
+    floatingBar?.classList.remove('visible');
+    toggleBtn?.classList.remove('active');
+    toggleBtn && (toggleBtn.textContent = '✏️ Modo Edición');
+    table?.classList.remove('inv-editable');
+  }
+}
+
+function countInventoryChanges() {
+  let count = 0;
+  document.querySelectorAll('#invTabla tbody tr').forEach(tr => {
+    if (tr.classList.contains('inv-row-changed')) count++;
+  });
+  return count;
+}
+
+function updateChangeCounter() {
+  const changeCount = document.getElementById('invChangeCount');
+  const count = countInventoryChanges();
+  if (changeCount) changeCount.textContent = count === 1 ? '1 cambio' : `${count} cambios`;
+}
+
+async function saveAllInventoryEdits() {
+  const table = document.getElementById('invTabla');
+  if (!table) return;
+  const rows = table.querySelectorAll('tbody tr.inv-row-changed');
+  if (!rows.length) { alert('No hay cambios para guardar.'); return; }
+
+  table.classList.add('fading');
+  const promises = [];
+  for (const tr of rows) {
+    const item = tr.dataset.item;
+    const orig = inventoryOriginalData.get(item);
+    if (!orig) continue;
+    const updated = {
+      id: orig.id,
+      item: item,
+      nombre: tr.querySelector('.edit-nombre')?.value.trim() || orig.nombre,
+      categoria: tr.querySelector('.edit-cat')?.value.trim() || 'General',
+      ceja: parseInt(tr.querySelector('.edit-ceja')?.value || '0', 10),
+      senkata: parseInt(tr.querySelector('.edit-senkata')?.value || '0', 10),
+      unidad: tr.querySelector('.edit-unidad')?.value.trim() || 'PCS',
+      precio: parseFloat(tr.querySelector('.edit-precio')?.value || '0')
+    };
+    promises.push(upsertProduct(updated));
+  }
+  await Promise.all(promises);
+  table.classList.remove('fading');
+
+  // Exit edit mode
+  inventoryEditMode = false;
+  inventoryEditingItems.clear();
+  inventoryOriginalData.clear();
+  updateEditModeUI();
+  await refreshInventoryUI();
+  setInventoryLiveStatus('Actualización en vivo activa', 'ok');
+  markInventoryLiveSyncTime();
+}
+
+function discardAllInventoryEdits() {
+  inventoryEditMode = false;
+  inventoryEditingItems.clear();
+  inventoryOriginalData.clear();
+  updateEditModeUI();
+  refreshInventoryUI();
+  setInventoryLiveStatus('Actualización en vivo activa', 'ok');
+  markInventoryLiveSyncTime();
+}
+
+async function toggleInventoryEditMode() {
+  if (inventoryEditMode) {
+    // If there are unsaved changes, confirm
+    const changes = countInventoryChanges();
+    if (changes > 0) {
+      if (!confirm(`Tienes ${changes} cambio(s) sin guardar. ¿Descartar?`)) return;
+    }
+    discardAllInventoryEdits();
+  } else {
+    inventoryEditMode = true;
+    setInventoryLiveStatus('Modo Edición activo — sync pausada', 'syncing');
+    // Store original data and render editable table
+    const list = await allProducts();
+    inventoryOriginalData.clear();
+    list.forEach(p => inventoryOriginalData.set(p.item, { ...p }));
+    inventoryEditingItems.add('__edit_mode__');
+    renderInventoryTableEditable(list);
+    updateEditModeUI();
+  }
+}
+
+function renderInventoryTableEditable(list) {
+  invTabla.innerHTML = list.map((p, idx) => `
+    <tr data-item="${escapeAttr(p.item)}">
+      <td class="col-rownum">${idx + 1}</td>
+      <td>${escapeHtml(p.item)}</td>
+      <td><input type="text" value="${escapeAttr(p.nombre)}" class="edit-nombre" data-orig="${escapeAttr(p.nombre || '')}" /></td>
+      <td><input type="text" value="${escapeAttr(p.categoria || '')}" class="edit-cat" data-orig="${escapeAttr(p.categoria || '')}" /></td>
+      <td><input type="number" value="${p.ceja || 0}" min="0" class="edit-ceja" data-orig="${p.ceja || 0}" /></td>
+      <td><input type="number" value="${p.senkata || 0}" min="0" class="edit-senkata" data-orig="${p.senkata || 0}" /></td>
+      <td><input type="text" value="${escapeAttr(p.unidad || '')}" class="edit-unidad" data-orig="${escapeAttr(p.unidad || '')}" /></td>
+      <td><input type="number" value="${p.precio || 0}" min="0" step="0.01" class="edit-precio" data-orig="${p.precio || 0}" /></td>
+      <td class="col-actions"></td>
+    </tr>
+  `).join('');
+  // Wire change detection on all inputs
+  invTabla.querySelectorAll('input').forEach(inp => {
+    inp.addEventListener('input', onEditableInputChange);
+  });
+}
+
+function onEditableInputChange(e) {
+  const inp = e.target;
+  const tr = inp.closest('tr');
+  if (!tr) return;
+  const orig = inp.dataset.orig ?? '';
+  const current = inp.value;
+  if (current !== String(orig)) {
+    inp.classList.add('inv-field-changed');
+    tr.classList.add('inv-row-changed');
+  } else {
+    inp.classList.remove('inv-field-changed');
+    const anyChanged = Array.from(tr.querySelectorAll('input')).some(i => i.classList.contains('inv-field-changed'));
+    if (!anyChanged) tr.classList.remove('inv-row-changed');
+  }
+  updateChangeCounter();
 }
 
 async function refreshInventoryLiveView() {
   if (currentSectionId !== 'inventarioSection') return;
-  if (inventoryEditLock) {
+  if (inventoryEditingItems.size > 0) {
     inventoryPendingSync = true;
-    setInventoryLiveStatus('Edición en curso (sync pausada)', 'syncing');
+    setInventoryLiveStatus(`Edición en curso (${inventoryEditingItems.size} fila(s)) — sync pausada`, 'syncing');
     return;
   }
   setInventoryLiveStatus('Sincronizando inventario...', 'syncing');
@@ -204,10 +356,18 @@ function extractP2PPrices(data) {
 }
 
 async function fetchParallelFromBinance() {
-  const endpoints = [
+  // Direct endpoints (work locally, blocked by CORS on GitHub Pages)
+  const directEndpoints = [
     'https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search',
     'https://www.binance.com/bapi/c2c/v2/friendly/c2c/adv/search'
   ];
+  // CORS proxy endpoints (for static hosting like GitHub Pages)
+  const proxyEndpoints = [
+    'https://corsproxy.io/?' + encodeURIComponent('https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search'),
+    'https://api.allorigins.win/raw?url=' + encodeURIComponent('https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search')
+  ];
+  const allEndpoints = [...directEndpoints, ...proxyEndpoints];
+
   const buildBody = (tradeType) => ({
     proMerchantAds: false,
     page: 1,
@@ -220,7 +380,7 @@ async function fetchParallelFromBinance() {
     asset: 'USDT'
   });
 
-  for (const p2pUrl of endpoints) {
+  for (const p2pUrl of allEndpoints) {
     try {
       const [buyRes, sellRes] = await Promise.all([
         fetchJsonWithTimeout(p2pUrl, {
@@ -242,47 +402,99 @@ async function fetchParallelFromBinance() {
       const sellPrices = extractP2PPrices(sellData?.data);
       const buyPrice = median(buyPrices);
       const sellPrice = median(sellPrices);
-      if (Number.isFinite(buyPrice) && Number.isFinite(sellPrice)) {
+      if (Number.isFinite(buyPrice) && Number.isFinite(sellPrice) && buyPrice > 7) {
         return { buyPrice, sellPrice, source: 'Paralelo P2P (Binance)' };
       }
     } catch {
-      // prueba siguiente endpoint
+      // try next endpoint
     }
   }
   return null;
 }
 
-async function fetchFallbackMarket() {
-  // 1) USDT/BOB directo
+// CriptoYa: aggregated P2P USDT/BOB rates for Latin America (CORS-friendly)
+async function fetchParallelFromCriptoYa() {
+  const urls = [
+    'https://criptoya.com/api/usdt/bob/1',
+    'https://criptoya.com/api/usdt/bob'
+  ];
+  for (const url of urls) {
+    try {
+      const res = await fetchJsonWithTimeout(url);
+      if (!res.ok) continue;
+      const data = await res.json();
+      // CriptoYa returns an object with exchange names as keys, each with ask/bid/totalAsk/totalBid
+      const exchanges = Object.values(data).filter(ex => ex && typeof ex === 'object' && Number.isFinite(Number(ex.totalAsk || ex.ask)));
+      if (!exchanges.length) continue;
+      const asks = exchanges.map(ex => Number(ex.totalAsk || ex.ask)).filter(x => Number.isFinite(x) && x > 7).sort((a, b) => a - b);
+      const bids = exchanges.map(ex => Number(ex.totalBid || ex.bid)).filter(x => Number.isFinite(x) && x > 7).sort((a, b) => a - b);
+      const buyPrice = median(asks);
+      const sellPrice = median(bids);
+      if (Number.isFinite(buyPrice) && Number.isFinite(sellPrice)) {
+        return { buyPrice, sellPrice, source: 'Paralelo P2P (CriptoYa)' };
+      }
+    } catch {
+      // try next URL
+    }
+  }
+  return null;
+}
+
+// Bitget P2P as another CORS-friendly alternative
+async function fetchParallelFromBitget() {
   try {
-    const res = await fetchJsonWithTimeout('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=bob');
+    const res = await fetchJsonWithTimeout('https://www.bitget.com/v1/p2p/pub/adv/queryAdvList', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        coinId: 'USDT',
+        fiatId: 'BOB',
+        side: 1, // buy
+        page: 1,
+        size: 10
+      })
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const prices = (data?.data?.dataList || [])
+      .map(x => Number(x?.price))
+      .filter(x => Number.isFinite(x) && x > 7)
+      .sort((a, b) => a - b);
+    if (!prices.length) return null;
+    const buyPrice = median(prices);
+
+    const res2 = await fetchJsonWithTimeout('https://www.bitget.com/v1/p2p/pub/adv/queryAdvList', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ coinId: 'USDT', fiatId: 'BOB', side: 2, page: 1, size: 10 })
+    });
+    let sellPrice = buyPrice;
+    if (res2.ok) {
+      const data2 = await res2.json();
+      const sellPrices = (data2?.data?.dataList || [])
+        .map(x => Number(x?.price))
+        .filter(x => Number.isFinite(x) && x > 7)
+        .sort((a, b) => a - b);
+      if (sellPrices.length) sellPrice = median(sellPrices);
+    }
+    return { buyPrice, sellPrice, source: 'Paralelo P2P (Bitget)' };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchFallbackMarket() {
+  // This only returns the OFFICIAL rate — clearly marked so the user knows
+  try {
+    const res = await fetchJsonWithTimeout('https://open.er-api.com/v6/latest/USD');
     if (res.ok) {
       const data = await res.json();
-      const p = Number(data?.tether?.bob);
-      if (Number.isFinite(p)) {
-        return { buyPrice: p, sellPrice: p, source: 'Mercado global (CoinGecko)' };
+      const p = Number(data?.rates?.BOB);
+      if (Number.isFinite(p) && p > 0) {
+        return { buyPrice: p, sellPrice: p, source: '⚠️ Tasa OFICIAL (no paralelo)' };
       }
     }
   } catch {}
-
-  // 2) USDT/USD * USD/BOB
-  try {
-    const [usdtRes, bobRes] = await Promise.all([
-      fetchJsonWithTimeout('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=usd'),
-      fetchJsonWithTimeout('https://open.er-api.com/v6/latest/USD')
-    ]);
-    if (usdtRes.ok && bobRes.ok) {
-      const usdtData = await usdtRes.json();
-      const bobData = await bobRes.json();
-      const usdtUsd = Number(usdtData?.tether?.usd);
-      const usdBob = Number(bobData?.rates?.BOB);
-      const p = usdtUsd * usdBob;
-      if (Number.isFinite(p)) {
-        return { buyPrice: p, sellPrice: p, source: 'Mercado global (fallback)' };
-      }
-    }
-  } catch {}
-
   return null;
 }
 
@@ -292,23 +504,33 @@ async function refreshFxWidget() {
     fxSetStatus('Actualizando...');
     if (fxRefreshBtn) fxRefreshBtn.disabled = true;
 
+    // Try P2P sources in order (all return the parallel rate)
     let result = await fetchParallelFromBinance();
-    if (!result) result = await fetchFallbackMarket();
+    if (!result) result = await fetchParallelFromCriptoYa();
+    if (!result) result = await fetchParallelFromBitget();
+
+    // If all P2P sources fail, try cache first (it has a recent parallel rate)
     if (!result) {
       const cached = fxLoadCache();
-      if (cached) {
+      if (cached && Number(cached.buyPrice) > 7) {
+        const ageMin = Math.round((Date.now() - (cached.ts || 0)) / 60000);
         result = {
           buyPrice: Number(cached.buyPrice),
           sellPrice: Number(cached.sellPrice),
-          source: `Sin conexión (mostrando último valor: ${cached.sourceLabel || 'cache'})`
+          source: `Último dato paralelo (hace ${ageMin} min)`
         };
       }
     }
+
+    // Last resort: official rate (clearly marked as NOT parallel)
+    if (!result) result = await fetchFallbackMarket();
+
     if (!result) throw new Error('Sin datos disponibles de tipo de cambio');
 
     const { buyPrice, sellPrice, source } = result;
     fxSetStatus(source);
-    fxSaveCache(buyPrice, sellPrice, source);
+    // Only cache if it's a real parallel rate (> 7 BOB/USD)
+    if (buyPrice > 7) fxSaveCache(buyPrice, sellPrice, source);
 
     const midPrice = (buyPrice + sellPrice) / 2;
     fxParallelBuyEl.textContent = fxFmt(buyPrice, 4);
@@ -872,6 +1094,17 @@ function renderComprobante(tipo, mov, targetBody, container) {
   try { setLastComprobante(tipo, mov); } catch {}
 }
 function fmt(n) { return `Bs ${Number(n).toFixed(2)}`; }
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+function escapeAttr(value) {
+  return escapeHtml(value);
+}
 
 // Totals helpers
 const ventaSubtotalEl = document.getElementById('ventaSubtotal');
@@ -1163,16 +1396,17 @@ async function refreshInventoryUI() {
 }
 
 function renderInventoryTable(list) {
-  invTabla.innerHTML = list.map(p => `
-    <tr data-item="${p.item}">
-      <td>${p.item}</td>
-      <td>${p.nombre}</td>
-      <td>${p.categoria || ''}</td>
+  invTabla.innerHTML = list.map((p, idx) => `
+    <tr data-item="${escapeAttr(p.item)}">
+      <td class="col-rownum">${idx + 1}</td>
+      <td>${escapeHtml(p.item)}</td>
+      <td>${escapeHtml(p.nombre)}</td>
+      <td>${escapeHtml(p.categoria || '')}</td>
       <td>${p.ceja ?? 0}</td>
       <td>${p.senkata ?? 0}</td>
-      <td>${p.unidad || ''}</td>
+      <td>${escapeHtml(p.unidad || '')}</td>
       <td>${fmt(p.precio ?? 0)}</td>
-      <td>
+      <td class="col-actions">
         <button class="secondary btn-edit">Editar</button>
         <button class="btn-delete">Eliminar</button>
         <button class="secondary btn-ver-ventas" title="Ver ventas de este producto">🔎</button>
@@ -1180,7 +1414,7 @@ function renderInventoryTable(list) {
     </tr>
   `).join('');
   // Wire acciones
-  invTabla.querySelectorAll('.btn-edit').forEach(btn => btn.addEventListener('click', onEditProduct));
+  invTabla.querySelectorAll('.btn-edit').forEach(btn => btn.addEventListener('click', () => toggleInventoryEditMode()));
   invTabla.querySelectorAll('.btn-delete').forEach(btn => btn.addEventListener('click', onDeleteProduct));
   invTabla.querySelectorAll('.btn-ver-ventas').forEach(btn => btn.addEventListener('click', onVerVentasProducto));
 }
@@ -1360,54 +1594,11 @@ invExportExcel?.addEventListener('click', async () => {
   }
 });
 
-async function onEditProduct(e) {
-  if (inventoryEditLock) {
-    alert('Ya hay una edición en curso en inventario.');
-    return;
-  }
-  const tr = e.target.closest('tr');
-  const item = tr.dataset.item;
-  const list = await allProducts();
-  const p = list.find(x => x.item === item);
-  startInventoryEditLock();
-  // Expand UI for clearer editing (no horizontal slide)
-  document.querySelector('.container')?.classList.add('edit-expanded');
-  tr.innerHTML = `
-    <td>${p.item}</td>
-    <td><input type="text" value="${p.nombre}" class="edit-nombre" /></td>
-    <td><input type="text" value="${p.categoria || ''}" class="edit-cat" /></td>
-    <td><input type="number" value="${p.ceja || 0}" min="0" class="edit-ceja" /></td>
-    <td><input type="number" value="${p.senkata || 0}" min="0" class="edit-senkata" /></td>
-    <td><input type="text" value="${p.unidad || ''}" class="edit-unidad" /></td>
-    <td><input type="number" value="${p.precio || 0}" min="0" step="0.01" class="edit-precio" /></td>
-    <td>
-      <button class="primary btn-save">Guardar</button>
-      <button class="btn-cancel">Cancelar</button>
-    </td>
-  `;
-  tr.querySelector('.btn-save').addEventListener('click', async () => {
-    const updated = {
-      id: p.id,
-      item: p.item,
-      nombre: tr.querySelector('.edit-nombre').value.trim(),
-      categoria: tr.querySelector('.edit-cat').value.trim() || 'General',
-      ceja: parseInt(tr.querySelector('.edit-ceja').value || '0', 10),
-      senkata: parseInt(tr.querySelector('.edit-senkata').value || '0', 10),
-      unidad: tr.querySelector('.edit-unidad').value.trim() || 'PCS',
-      precio: parseFloat(tr.querySelector('.edit-precio').value || '0')
-    };
-    await upsertProduct(updated);
-    await refreshInventoryUI();
-    // Restore normal width after finishing edit
-    document.querySelector('.container')?.classList.remove('edit-expanded');
-    await endInventoryEditLock();
-  });
-  tr.querySelector('.btn-cancel').addEventListener('click', async () => {
-    await refreshInventoryUI();
-    document.querySelector('.container')?.classList.remove('edit-expanded');
-    await endInventoryEditLock();
-  });
-}
+// Wire edit mode buttons
+document.getElementById('invEditModeToggle')?.addEventListener('click', toggleInventoryEditMode);
+document.getElementById('invSaveAllBtn')?.addEventListener('click', saveAllInventoryEdits);
+document.getElementById('invDiscardAll')?.addEventListener('click', discardAllInventoryEdits);
+
 // Ventas: historial
 const ventasHistTablaBody = document.getElementById('ventasHistTabla')?.querySelector('tbody');
 const ventasFiltroRango = document.getElementById('ventasFiltroRango');
@@ -2135,25 +2326,39 @@ const movAddItemBtn = document.getElementById('movAddItem');
 const movItemsTbody = document.getElementById('movItems');
 const movLimpiar = document.getElementById('movLimpiar');
 const movTablaBody = document.getElementById('movTabla')?.querySelector('tbody');
+const movRecentList = document.getElementById('movRecentList');
+
+let movHistPage = 1;
+const MOV_HIST_PER_PAGE = 20;
+let movHistFilteredData = [];
+
+function renumberMovRows() {
+  if (!movItemsTbody) return;
+  Array.from(movItemsTbody.querySelectorAll('tr')).forEach((tr, i) => {
+    const numCell = tr.querySelector('.mov-row-num');
+    if (numCell) numCell.textContent = String(i + 1);
+  });
+}
 
 function newMovRow() {
   const tr = document.createElement('tr');
   tr.innerHTML = `
+    <td class="mov-row-num">1</td>
     <td><input type="text" class="mov-item" list="datalistMovItems" placeholder="SKU o nombre" /></td>
     <td class="mov-nombre">-</td>
-    <td class="mov-senk">0</td>
-    <td><input type="number" class="mov-cant" min="1" value="" /></td>
-    <td><button type="button" class="remove">✕</button></td>
+    <td class="mov-senk-cell">-</td>
+    <td><input type="number" class="mov-cant" min="1" value="" placeholder="0" /></td>
+    <td><button type="button" class="remove" title="Quitar línea">✕</button></td>
   `;
   const itemInput = tr.querySelector('.mov-item');
   const nombreCell = tr.querySelector('.mov-nombre');
-  const senkCell = tr.querySelector('.mov-senk');
+  const senkCell = tr.querySelector('.mov-senk-cell');
   const cantInput = tr.querySelector('.mov-cant');
   const removeBtn = tr.querySelector('.remove');
 
   async function resolveProduct() {
     const val = (itemInput.value || '').trim();
-    if (!val) { nombreCell.textContent = '-'; senkCell.textContent = '0'; cantInput.value = ''; cantInput.removeAttribute('max'); tr.dataset.item = ''; return; }
+    if (!val) { nombreCell.textContent = '-'; senkCell.textContent = '-'; senkCell.className = 'mov-senk-cell'; cantInput.value = ''; cantInput.removeAttribute('max'); tr.dataset.item = ''; return; }
     let p = await findProductByITEM(val);
     if (!p) {
       const all = await allProducts();
@@ -2163,20 +2368,23 @@ function newMovRow() {
     if (p) {
       tr.dataset.item = p.item;
       nombreCell.textContent = p.nombre || '';
-      senkCell.textContent = String(p.senkata || 0);
+      const senk = p.senkata || 0;
+      senkCell.textContent = String(senk);
+      senkCell.className = 'mov-senk-cell ' + (senk <= 5 ? 'senk-low' : 'senk-ok');
       cantInput.value = '';
-      cantInput.setAttribute('max', String(p.senkata || 0));
+      cantInput.setAttribute('max', String(senk));
     } else {
       tr.dataset.item = '';
       nombreCell.textContent = 'No encontrado';
-      senkCell.textContent = '0';
+      senkCell.textContent = '-';
+      senkCell.className = 'mov-senk-cell';
       cantInput.value = '';
       cantInput.removeAttribute('max');
     }
   }
   itemInput.addEventListener('change', resolveProduct);
   itemInput.addEventListener('blur', resolveProduct);
-  itemInput.addEventListener('input', () => { nombreCell.textContent = '-'; senkCell.textContent = '0'; tr.dataset.item=''; });
+  itemInput.addEventListener('input', () => { nombreCell.textContent = '-'; senkCell.textContent = '-'; senkCell.className = 'mov-senk-cell'; tr.dataset.item=''; });
   cantInput.addEventListener('input', () => {
     const max = parseInt(cantInput.getAttribute('max') || '0', 10);
     let v = parseInt(cantInput.value || '0', 10);
@@ -2185,6 +2393,7 @@ function newMovRow() {
   });
   removeBtn.addEventListener('click', () => {
     tr.remove();
+    renumberMovRows();
     if (movItemsTbody && movItemsTbody.children.length === 0) {
       movItemsTbody.appendChild(newMovRow());
     }
@@ -2213,86 +2422,151 @@ function cleanMovementDetalle(detalle = '') {
   return String(detalle).replace(/\s*\[MOV:[A-Z0-9-]+\]/i, '').trim();
 }
 
-async function refreshMovimientosTable() {
-  const data = await allMovements();
-  if (!movTablaBody) return;
+function buildGroupedTransfers(data, filterDesde, filterHasta) {
   const transfers = (data || []).filter(m => m.tipo === 'transfer');
-  if (!transfers.length) {
-    movTablaBody.innerHTML = `<tr><td colspan="7">No hay movimientos SENKATA → CEJA registrados.</td></tr>`;
-    return;
-  }
+  let filtered = transfers;
+  if (filterDesde) filtered = filtered.filter(m => String(m.fecha || '') >= filterDesde);
+  if (filterHasta) filtered = filtered.filter(m => String(m.fecha || '') <= filterHasta);
 
   const groups = new Map();
-  for (const m of transfers) {
+  for (const m of filtered) {
     const key = String(m.fecha || '');
     if (!groups.has(key)) {
       groups.set(key, {
         key,
-        fecha: m.fecha,
-        tipo: m.tipo,
-        detalleBase: 'SENKATA → CEJA',
+        fecha: m.fecha || '',
+        tipo: 'transfer',
         cantidadTotal: 0,
         total: 0,
         rows: [],
-        maxId: m.id || 0
+        maxId: Number(m.id || 0)
       });
     }
-    const g = groups.get(key);
+    const group = groups.get(key);
     const batchId = extractMovementBatchId(m.detalle);
-    g.cantidadTotal += Number(m.cantidad || 0);
-    g.total += Number(m.total || 0);
-    g.rows.push({
+    group.cantidadTotal += Number(m.cantidad || 0);
+    group.total += Number(m.total || 0);
+    group.rows.push({
       id: Number(m.id || 0),
       item: m.item || '',
       nombre: m.nombre || '',
       cantidad: Number(m.cantidad || 0),
-      batchId: batchId || ''
+      batchId,
+      detalle: cleanMovementDetalle(m.detalle)
     });
-    g.maxId = Math.max(g.maxId, Number(m.id || 0));
+    group.maxId = Math.max(group.maxId, Number(m.id || 0));
   }
 
-  const grouped = Array.from(groups.values()).sort((a, b) => {
-    const d = String(b.fecha || '').localeCompare(String(a.fecha || ''));
-    if (d !== 0) return d;
+  return Array.from(groups.values()).sort((a, b) => {
+    const dateCompare = String(b.fecha || '').localeCompare(String(a.fecha || ''));
+    if (dateCompare !== 0) return dateCompare;
     return (b.maxId || 0) - (a.maxId || 0);
   });
+}
 
-  movTablaBody.innerHTML = grouped.map((g, idx) => {
-    const linesCount = g.rows.length;
-    const itemCell = `${linesCount} líneas`;
-    const nombreCell = 'Movimientos del día';
-    const detailsList = g.rows.map(r => `
+function renderRecentMovimientos(groups) {
+  if (!movRecentList) return;
+  const recentGroups = (groups || []).slice(0, 5);
+  if (!recentGroups.length) {
+    movRecentList.innerHTML = `
+      <div class="mov-empty-state">
+        <div class="mov-empty-icon">📦</div>
+        <p><strong>Aun no hay movimientos recientes</strong></p>
+        <p>Los ultimos 5 dias con transferencias apareceran aqui</p>
+      </div>
+    `;
+    return;
+  }
+
+  movRecentList.innerHTML = recentGroups.map(group => {
+    const preview = group.rows.slice(0, 4).map(row => `
+      <div class="mov-recent-line">
+        <div>
+          <strong>${escapeHtml(row.item)}</strong>
+          <span> ${escapeHtml(row.nombre || '')}</span>
+        </div>
+        <span class="mov-line-qty">Cantidad: ${row.cantidad}</span>
+      </div>
+    `).join('');
+    const remaining = group.rows.length - 4;
+    return `
+      <div class="mov-recent-item">
+        <div class="mov-recent-top">
+          <div class="mov-recent-date">${escapeHtml(group.fecha)}</div>
+          <div class="mov-recent-meta">
+            <span class="mov-stat-pill">${group.rows.length} producto${group.rows.length !== 1 ? 's' : ''}</span>
+            <span class="mov-stat-pill">${group.cantidadTotal} unidad${group.cantidadTotal !== 1 ? 'es' : ''}</span>
+          </div>
+        </div>
+        <div class="mov-recent-lines">${preview}</div>
+        ${remaining > 0 ? `<div class="mov-recent-more">y ${remaining} linea${remaining !== 1 ? 's' : ''} mas...</div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+async function refreshMovimientosTable(filterDesde, filterHasta) {
+  const data = await allMovements();
+  if (!movTablaBody) return;
+  const allGroups = buildGroupedTransfers(data);
+  renderRecentMovimientos(allGroups);
+  const filteredGroups = buildGroupedTransfers(data, filterDesde, filterHasta);
+  movHistFilteredData = filteredGroups;
+
+  if (!filteredGroups.length) {
+    movTablaBody.innerHTML = `<tr><td colspan="6">
+      <div class="mov-empty-state">
+        <div class="mov-empty-icon">📦</div>
+        <p><strong>No hay movimientos</strong></p>
+        <p>Los movimientos SENKATA → CEJA aparecerán aquí</p>
+      </div>
+    </td></tr>`;
+    renderMovHistPagination();
+    return;
+  }
+
+  const totalPages = Math.ceil(filteredGroups.length / MOV_HIST_PER_PAGE);
+  if (movHistPage > totalPages) movHistPage = totalPages;
+  if (movHistPage < 1) movHistPage = 1;
+  const start = (movHistPage - 1) * MOV_HIST_PER_PAGE;
+  const pageItems = filteredGroups.slice(start, start + MOV_HIST_PER_PAGE);
+
+  movTablaBody.innerHTML = pageItems.map((group, idx) => {
+    const detailsList = group.rows.map(row => `
       <li class="mov-line-item">
         <div class="mov-line-main">
-          <strong>${r.item}</strong>
-          <span>${r.nombre}</span>
-          <span class="mov-line-qty">Cantidad: ${r.cantidad}</span>
-          ${r.batchId ? `<span class="note">(${r.batchId})</span>` : ''}
+          <strong>${escapeHtml(row.item)}</strong>
+          <span>${escapeHtml(row.nombre)}</span>
+          <span class="mov-line-qty">Cantidad: ${row.cantidad}</span>
+          ${row.batchId ? `<span class="note">(${escapeHtml(row.batchId)})</span>` : ''}
         </div>
-        <button type="button" class="btn-delete-mov-line" data-group-index="${idx}" data-mov-id="${r.id}" title="Eliminar esta línea y revertir stock" hidden>Eliminar</button>
+        <button type="button" class="btn-delete-mov-line" data-group-index="${idx}" data-mov-id="${row.id}" title="Eliminar esta línea y revertir stock" hidden>Eliminar</button>
       </li>
     `).join('');
-    const detailsHtml = `
-      <details>
-        <summary>Ver detalle del día (${linesCount})</summary>
-        <div class="mov-group-detail" data-group-index="${idx}">
-          <div class="mov-group-toolbar">
-            <button type="button" class="secondary btn-mov-edit" data-group-index="${idx}">Editar</button>
-            <button type="button" class="btn-mov-done" data-group-index="${idx}" hidden>Listo</button>
-          </div>
-          <ul class="mov-lines-list">${detailsList}</ul>
-        </div>
-      </details>
-    `;
     return `
-      <tr>
-        <td>${g.fecha}</td>
-        <td>${g.tipo}</td>
-        <td>${itemCell}</td>
-        <td>${nombreCell}</td>
-        <td>${g.cantidadTotal}</td>
-        <td>${g.detalleBase}${detailsHtml}</td>
-        <td>${fmt(g.total || 0)}</td>
+      <tr class="mov-hist-row">
+        <td>${escapeHtml(group.fecha || '')}</td>
+        <td><span class="mov-badge mov-badge-transfer">Transfer</span></td>
+        <td>
+          <div class="mov-day-summary">
+            <strong>${group.rows.length} producto${group.rows.length !== 1 ? 's' : ''}</strong>
+            <span>${group.rows.map(row => escapeHtml(row.item)).slice(0, 3).join(', ')}${group.rows.length > 3 ? '...' : ''}</span>
+          </div>
+        </td>
+        <td style="text-align:center;font-weight:600;">${group.cantidadTotal}</td>
+        <td>
+          <details>
+            <summary>Ver detalle del dia (${group.rows.length})</summary>
+            <div class="mov-group-detail" data-group-index="${idx}">
+              <div class="mov-group-toolbar">
+                <button type="button" class="secondary btn-mov-edit" data-group-index="${idx}">Editar</button>
+                <button type="button" class="btn-mov-done" data-group-index="${idx}" hidden>Listo</button>
+              </div>
+              <ul class="mov-lines-list">${detailsList}</ul>
+            </div>
+          </details>
+        </td>
+        <td>${fmt(group.total || 0)}</td>
       </tr>
     `;
   }).join('');
@@ -2328,6 +2602,68 @@ async function refreshMovimientosTable() {
       if (!id) return;
       await deleteMovimientoLinea(id);
     });
+  });
+
+  renderMovHistPagination();
+}
+
+function renderMovHistPagination() {
+  const pag = document.getElementById('movHistPagination');
+  if (!pag) return;
+  const total = movHistFilteredData.length;
+  const totalPages = Math.max(1, Math.ceil(total / MOV_HIST_PER_PAGE));
+
+  if (totalPages <= 1) { pag.innerHTML = total > 0 ? `<span class="mov-page-info">${total} dia${total !== 1 ? 's' : ''} con movimientos</span>` : ''; return; }
+
+  let html = `<button type="button" class="mov-page-prev" ${movHistPage <= 1 ? 'disabled' : ''}>← Anterior</button>`;
+  const maxBtns = 5;
+  let startP = Math.max(1, movHistPage - Math.floor(maxBtns / 2));
+  let endP = Math.min(totalPages, startP + maxBtns - 1);
+  if (endP - startP < maxBtns - 1) startP = Math.max(1, endP - maxBtns + 1);
+
+  for (let i = startP; i <= endP; i++) {
+    html += `<button type="button" class="mov-page-btn ${i === movHistPage ? 'active' : ''}" data-page="${i}">${i}</button>`;
+  }
+  html += `<button type="button" class="mov-page-next" ${movHistPage >= totalPages ? 'disabled' : ''}>Siguiente →</button>`;
+  html += `<span class="mov-page-info">${total} dia${total !== 1 ? 's' : ''} con movimientos</span>`;
+  pag.innerHTML = html;
+
+  pag.querySelector('.mov-page-prev')?.addEventListener('click', () => { movHistPage--; refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value); });
+  pag.querySelector('.mov-page-next')?.addEventListener('click', () => { movHistPage++; refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value); });
+  pag.querySelectorAll('.mov-page-btn').forEach(btn => {
+    btn.addEventListener('click', () => { movHistPage = parseInt(btn.dataset.page); refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value); });
+  });
+}
+
+// Tabs for movimientos
+function initMovTabs() {
+  const tabs = document.querySelectorAll('.mov-tab');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.mov-view').forEach(v => v.hidden = true);
+      const target = document.getElementById(tab.dataset.movView);
+      if (target) target.hidden = false;
+      // Refresh historial when switching to it
+      if (tab.dataset.movView === 'movHistView') {
+        movHistPage = 1;
+        refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value);
+      }
+    });
+  });
+  // Historial filter buttons
+  document.getElementById('movHistFiltrar')?.addEventListener('click', () => {
+    movHistPage = 1;
+    refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value);
+  });
+  document.getElementById('movHistLimpiar')?.addEventListener('click', () => {
+    const desde = document.getElementById('movHistDesde');
+    const hasta = document.getElementById('movHistHasta');
+    if (desde) desde.value = '';
+    if (hasta) hasta.value = '';
+    movHistPage = 1;
+    refreshMovimientosTable();
   });
 }
 
@@ -2397,12 +2733,13 @@ formMov?.addEventListener('submit', async (e) => {
     alert(`Movimiento registrado: ${batchId} (${processed} líneas)`);
     movItemsTbody.innerHTML = '';
     movItemsTbody.appendChild(newMovRow());
+    renumberMovRows();
   } else {
     alert('No se registró ningún movimiento.');
   }
 });
 
-movLimpiar?.addEventListener('click', () => { formMov.reset(); if (movItemsTbody){ movItemsTbody.innerHTML=''; movItemsTbody.appendChild(newMovRow()); } });
+movLimpiar?.addEventListener('click', () => { formMov.reset(); if (movItemsTbody){ movItemsTbody.innerHTML=''; movItemsTbody.appendChild(newMovRow()); renumberMovRows(); } });
 
 // Inicialización
 (async () => {
@@ -2416,11 +2753,14 @@ movLimpiar?.addEventListener('click', () => { formMov.reset(); if (movItemsTbody
   await refreshVentasHistorial();
   initAdminSettingsUI();
   populateBulkCategories();
+  initMovTabs();
   if (movItemsTbody && movItemsTbody.children.length === 0) {
     movItemsTbody.appendChild(newMovRow());
+    renumberMovRows();
   }
   movAddItemBtn?.addEventListener('click', () => {
     movItemsTbody.appendChild(newMovRow());
+    renumberMovRows();
   });
   await refreshFxWidget();
   setInterval(refreshFxWidget, 30000);

@@ -26,63 +26,97 @@
       <button class="nav-btn" data-target="adminSection">Administrador</button>
     </nav>
   </header>
+
+  <main class="container">
     <!-- Movimientos entre depósitos -->
     <section id="movSection" class="page-section" hidden>
       <h2>Movimiento de Productos (SENKATA → CEJA)</h2>
-      <form id="formMov" class="card">
-        <div class="grid-3">
-          <label>Fecha
-            <input type="date" id="movFecha" required />
-          </label>
-          <div></div>
-          <div class="actions" style="justify-content:flex-end;">
-            <button type="button" id="movAddItem" class="secondary">Agregar línea</button>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>ITEM</th>
-                <th>Nombre</th>
-                <th>SENKATA</th>
-                <th>Cantidad</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="movItems" class="items"></tbody>
-          </table>
-        </div>
-        <div class="actions">
-          <button type="submit" class="primary">Registrar Movimiento</button>
-          <button type="button" id="movLimpiar">Limpiar</button>
-        </div>
-        <datalist id="datalistMovItems"></datalist>
-        <p class="note">Se descuenta de SENKATA y se incrementa en CEJA.</p>
-      </form>
 
-      <div class="card">
-        <h3>Historial de Movimientos</h3>
-        <div class="table-wrap">
-          <table class="table" id="movTabla">
-            <thead>
-              <tr>
-                <th>Fecha</th>
-                <th>Tipo</th>
-                <th>ITEM</th>
-                <th>Nombre</th>
-                <th>Cantidad</th>
-                <th>Detalle</th>
-                <th>Total</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+      <!-- Sub-tabs -->
+      <div class="mov-tabs">
+        <button type="button" class="mov-tab active" data-mov-view="movNewView">➕ Nuevo Movimiento</button>
+        <button type="button" class="mov-tab" data-mov-view="movHistView">📋 Historial Completo</button>
+      </div>
+
+      <!-- Tab 1: Nuevo movimiento -->
+      <div id="movNewView" class="mov-view">
+        <form id="formMov" class="card">
+          <div class="mov-form-header">
+            <label>Fecha
+              <input type="date" id="movFecha" required />
+            </label>
+            <div class="mov-form-hint">
+              <span class="note">Se descuenta de SENKATA y se incrementa en CEJA</span>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="table mov-new-table">
+              <thead>
+                <tr>
+                  <th style="width:40px">#</th>
+                  <th>ITEM</th>
+                  <th>Nombre</th>
+                  <th>Disp. SENKATA</th>
+                  <th style="width:120px">Cantidad</th>
+                  <th style="width:50px"></th>
+                </tr>
+              </thead>
+              <tbody id="movItems" class="items"></tbody>
+            </table>
+          </div>
+
+          <div class="mov-form-footer">
+            <button type="button" id="movAddItem" class="secondary">＋ Agregar producto</button>
+            <div class="mov-form-footer-right">
+              <button type="button" id="movLimpiar" class="btn-danger">Limpiar</button>
+              <button type="submit" class="primary">📦 Registrar Movimiento</button>
+            </div>
+          </div>
+          <datalist id="datalistMovItems"></datalist>
+        </form>
+
+        <div class="card mov-recent-card">
+          <div class="mov-recent-header">
+            <h3 style="margin:0;">Ultimos 5 dias con movimientos</h3>
+            <span class="note">Resumen rapido de las transferencias mas recientes</span>
+          </div>
+          <div id="movRecentList" class="mov-recent-list"></div>
+        </div>
+      </div>
+
+      <!-- Tab 2: Historial -->
+      <div id="movHistView" class="mov-view" hidden>
+        <div class="card">
+          <div class="mov-hist-toolbar">
+            <h3 style="margin:0;">Todos los Movimientos por Dia</h3>
+            <div class="mov-hist-filters">
+              <label>Desde <input type="date" id="movHistDesde" /></label>
+              <label>Hasta <input type="date" id="movHistHasta" /></label>
+              <button type="button" id="movHistFiltrar" class="primary">Filtrar</button>
+              <button type="button" id="movHistLimpiar" class="secondary">Limpiar</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="movTabla">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Tipo</th>
+                  <th>Productos</th>
+                  <th>Cantidad Total</th>
+                  <th>Detalle</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="movHistPagination" class="mov-pagination"></div>
         </div>
       </div>
     </section>
 
-  <main class="container">
     <!-- Ingreso de productos con comprobante -->
     <section id="ingresoSection" class="page-section">
       <h2>Ingreso de Productos (Comprobante)</h2>
@@ -278,16 +312,26 @@
           </div>
         </div>
 
-        <div id="invLiveStatus" class="inv-live-status" aria-live="polite">
-          <span class="live-dot" id="invLiveDot"></span>
-          <span id="invLiveText">Actualización en vivo activa</span>
-          <span id="invLiveTime" class="note">Última sync: --</span>
+        <div class="inv-edit-toolbar">
+          <button id="invEditModeToggle" class="secondary inv-edit-toggle" type="button">✏️ Modo Edición</button>
+          <div id="invLiveStatus" class="inv-live-status" style="flex:1; margin:0;" aria-live="polite">
+            <span class="live-dot" id="invLiveDot"></span>
+            <span id="invLiveText">Actualización en vivo activa</span>
+            <span id="invLiveTime" class="note">Última sync: --</span>
+          </div>
+        </div>
+
+        <div id="invEditBanner" class="inv-edit-banner">
+          <span class="banner-icon">✏️</span>
+          <span>Modo Edición activado — edita directamente las celdas de la tabla</span>
+          <span class="banner-hint">Los cambios se resaltan en amarillo</span>
         </div>
 
         <div class="table-wrap">
           <table class="table" id="invTabla">
             <thead>
               <tr>
+                <th class="col-rownum">#</th>
                 <th>ITEM</th>
                 <th>Nombre</th>
                 <th>Categoría</th>
@@ -295,11 +339,22 @@
                 <th>SENKATA</th>
                 <th>Unidad</th>
                 <th>Precio</th>
-                <th>Acciones</th>
+                <th class="col-actions">Acciones</th>
               </tr>
             </thead>
             <tbody></tbody>
           </table>
+        </div>
+
+        <div id="invFloatingBar" class="inv-floating-bar">
+          <div class="bar-counter">
+            <span>📝</span>
+            <span id="invChangeCount">0 cambios</span>
+          </div>
+          <div class="bar-actions">
+            <button type="button" class="btn-danger" id="invDiscardAll">✕ Descartar cambios</button>
+            <button type="button" class="primary" id="invSaveAllBtn">💾 Guardar todos los cambios</button>
+          </div>
         </div>
       </div>
     </section>
