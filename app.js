@@ -831,10 +831,38 @@ async function addMovement(mov) {
   const { error } = await supabase.from('movements').insert(mov);
   if (error) console.error('addMovement', error);
 }
-async function allMovements() {
-  const { data, error } = await supabase.from('movements').select('*').order('fecha', { ascending: false });
-  if (error) { console.error(error); return []; }
-  return data || [];
+async function allMovements(options = {}) {
+  const includeAll = !!options.includeAll;
+  if (!includeAll) {
+    const { data, error } = await supabase.from('movements').select('*').order('fecha', { ascending: false });
+    if (error) { console.error(error); return []; }
+    return data || [];
+  }
+
+  const chunkSize = 1000;
+  let from = 0;
+  const rows = [];
+
+  while (true) {
+    const { data: chunk, error } = await supabase
+      .from('movements')
+      .select('*')
+      .order('fecha', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, from + chunkSize - 1);
+
+    if (error) {
+      console.error(error);
+      break;
+    }
+    if (!chunk || chunk.length === 0) break;
+
+    rows.push(...chunk);
+    if (chunk.length < chunkSize) break;
+    from += chunkSize;
+  }
+
+  return rows;
 }
 
 // Componentes dinámicos: fila de ingreso
@@ -1607,7 +1635,9 @@ const ventasFiltroHasta = document.getElementById('ventasFiltroHasta');
 const ventasFiltroCliente = document.getElementById('ventasFiltroCliente');
 const ventasFiltroAplicar = document.getElementById('ventasFiltroAplicar');
 const ventasFiltroLimpiar = document.getElementById('ventasFiltroLimpiar');
+const ventasVerHistoricoBtn = document.getElementById('ventasVerHistorico');
 const ventasTotalFooter = document.getElementById('ventasTotalFooter');
+let ventasMostrarHistoricoCompleto = false;
 
 function getDateRange() {
   const today = new Date();
@@ -1640,12 +1670,44 @@ async function refreshVentasHistorial() {
   if (!ventasHistTablaBody) return;
   try {
     const range = getDateRange();
-    let query = supabase.from('sales').select('*');
-    if (range.desde) query = query.gte('fecha', range.desde);
-    if (range.hasta) query = query.lte('fecha', range.hasta);
     const clienteQ = ventasFiltroCliente?.value?.trim();
-    if (clienteQ) query = query.ilike('cliente', `%${clienteQ}%`);
-    const { data, error } = await query.order('fecha', { ascending: false }).limit(500);
+
+    const buildSalesQuery = () => {
+      let q = supabase.from('sales').select('*');
+      if (range.desde) q = q.gte('fecha', range.desde);
+      if (range.hasta) q = q.lte('fecha', range.hasta);
+      if (clienteQ) q = q.ilike('cliente', `%${clienteQ}%`);
+      return q;
+    };
+
+    let data = [];
+    let error = null;
+
+    if (ventasMostrarHistoricoCompleto) {
+      const pageSize = 1000;
+      let from = 0;
+      while (true) {
+        const { data: chunk, error: chunkError } = await buildSalesQuery()
+          .order('fecha', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, from + pageSize - 1);
+
+        if (chunkError) { error = chunkError; break; }
+        if (!chunk || chunk.length === 0) break;
+
+        data = data.concat(chunk);
+        if (chunk.length < pageSize) break;
+        from += pageSize;
+      }
+    } else {
+      const { data: partialData, error: partialError } = await buildSalesQuery()
+        .order('fecha', { ascending: false })
+        .order('id', { ascending: false })
+        .limit(500);
+      data = partialData || [];
+      error = partialError;
+    }
+
     if (error) { console.error('sales fetch error', error); ventasHistTablaBody.innerHTML = `<tr><td colspan="7">Error al cargar ventas.</td></tr>`; return; }
     if (!data || data.length === 0) {
       ventasHistTablaBody.innerHTML = `<tr><td colspan="7">No hay ventas para el rango seleccionado.</td></tr>`;
@@ -2071,6 +2133,11 @@ ventasFiltroLimpiar?.addEventListener('click', async () => {
   if (ventasFiltroCliente) ventasFiltroCliente.value = '';
   await refreshVentasHistorial();
 });
+ventasVerHistoricoBtn?.addEventListener('click', async () => {
+  ventasMostrarHistoricoCompleto = !ventasMostrarHistoricoCompleto;
+  ventasVerHistoricoBtn.textContent = ventasMostrarHistoricoCompleto ? 'Volver a vista resumida' : 'Ver historico completo';
+  await refreshVentasHistorial();
+});
 
 async function onDeleteProduct(e) {
   const tr = e.target.closest('tr');
@@ -2331,6 +2398,7 @@ const movRecentList = document.getElementById('movRecentList');
 let movHistPage = 1;
 const MOV_HIST_PER_PAGE = 20;
 let movHistFilteredData = [];
+let movHistMostrarCompleto = false;
 
 function renumberMovRows() {
   if (!movItemsTbody) return;
@@ -2506,7 +2574,7 @@ function renderRecentMovimientos(groups) {
 }
 
 async function refreshMovimientosTable(filterDesde, filterHasta) {
-  const data = await allMovements();
+  const data = await allMovements({ includeAll: movHistMostrarCompleto });
   if (!movTablaBody) return;
   const allGroups = buildGroupedTransfers(data);
   renderRecentMovimientos(allGroups);
@@ -2528,8 +2596,9 @@ async function refreshMovimientosTable(filterDesde, filterHasta) {
   const totalPages = Math.ceil(filteredGroups.length / MOV_HIST_PER_PAGE);
   if (movHistPage > totalPages) movHistPage = totalPages;
   if (movHistPage < 1) movHistPage = 1;
-  const start = (movHistPage - 1) * MOV_HIST_PER_PAGE;
-  const pageItems = filteredGroups.slice(start, start + MOV_HIST_PER_PAGE);
+  const pageItems = movHistMostrarCompleto
+    ? filteredGroups
+    : filteredGroups.slice((movHistPage - 1) * MOV_HIST_PER_PAGE, (movHistPage - 1) * MOV_HIST_PER_PAGE + MOV_HIST_PER_PAGE);
 
   movTablaBody.innerHTML = pageItems.map((group, idx) => {
     const detailsList = group.rows.map(row => `
@@ -2610,6 +2679,11 @@ async function refreshMovimientosTable(filterDesde, filterHasta) {
 function renderMovHistPagination() {
   const pag = document.getElementById('movHistPagination');
   if (!pag) return;
+  if (movHistMostrarCompleto) {
+    const totalAll = movHistFilteredData.length;
+    pag.innerHTML = totalAll > 0 ? `<span class="mov-page-info">Mostrando historial completo: ${totalAll} dia${totalAll !== 1 ? 's' : ''} con movimientos</span>` : '';
+    return;
+  }
   const total = movHistFilteredData.length;
   const totalPages = Math.max(1, Math.ceil(total / MOV_HIST_PER_PAGE));
 
@@ -2664,6 +2738,20 @@ function initMovTabs() {
     if (hasta) hasta.value = '';
     movHistPage = 1;
     refreshMovimientosTable();
+  });
+
+  const movHistVerCompletoBtn = document.getElementById('movHistVerCompleto');
+  movHistVerCompletoBtn?.addEventListener('click', () => {
+    movHistMostrarCompleto = !movHistMostrarCompleto;
+    movHistPage = 1;
+    movHistVerCompletoBtn.textContent = movHistMostrarCompleto ? 'Volver a vista paginada' : 'Ver historico completo';
+    if (movHistMostrarCompleto) {
+      const desde = document.getElementById('movHistDesde');
+      const hasta = document.getElementById('movHistHasta');
+      if (desde) desde.value = '';
+      if (hasta) hasta.value = '';
+    }
+    refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value);
   });
 }
 
