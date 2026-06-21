@@ -2394,6 +2394,7 @@ const movItemsTbody = document.getElementById('movItems');
 const movLimpiar = document.getElementById('movLimpiar');
 const movTablaBody = document.getElementById('movTabla')?.querySelector('tbody');
 const movRecentList = document.getElementById('movRecentList');
+const movHistItem = document.getElementById('movHistItem');
 
 let movHistPage = 1;
 const MOV_HIST_PER_PAGE = 20;
@@ -2490,11 +2491,13 @@ function cleanMovementDetalle(detalle = '') {
   return String(detalle).replace(/\s*\[MOV:[A-Z0-9-]+\]/i, '').trim();
 }
 
-function buildGroupedTransfers(data, filterDesde, filterHasta) {
+function buildGroupedTransfers(data, filterDesde, filterHasta, filterItem = '') {
   const transfers = (data || []).filter(m => m.tipo === 'transfer');
   let filtered = transfers;
   if (filterDesde) filtered = filtered.filter(m => String(m.fecha || '') >= filterDesde);
   if (filterHasta) filtered = filtered.filter(m => String(m.fecha || '') <= filterHasta);
+  const itemQ = String(filterItem || '').trim().toLowerCase();
+  if (itemQ) filtered = filtered.filter(m => String(m.item || '').toLowerCase().includes(itemQ));
 
   const groups = new Map();
   for (const m of filtered) {
@@ -2573,12 +2576,12 @@ function renderRecentMovimientos(groups) {
   }).join('');
 }
 
-async function refreshMovimientosTable(filterDesde, filterHasta) {
+async function refreshMovimientosTable(filterDesde, filterHasta, filterItem) {
   const data = await allMovements({ includeAll: movHistMostrarCompleto });
   if (!movTablaBody) return;
   const allGroups = buildGroupedTransfers(data);
   renderRecentMovimientos(allGroups);
-  const filteredGroups = buildGroupedTransfers(data, filterDesde, filterHasta);
+  const filteredGroups = buildGroupedTransfers(data, filterDesde, filterHasta, filterItem);
   movHistFilteredData = filteredGroups;
 
   if (!filteredGroups.length) {
@@ -2601,17 +2604,16 @@ async function refreshMovimientosTable(filterDesde, filterHasta) {
     : filteredGroups.slice((movHistPage - 1) * MOV_HIST_PER_PAGE, (movHistPage - 1) * MOV_HIST_PER_PAGE + MOV_HIST_PER_PAGE);
 
   movTablaBody.innerHTML = pageItems.map((group, idx) => {
-    const detailsList = group.rows.map(row => `
-      <li class="mov-line-item">
-        <div class="mov-line-main">
-          <strong>${escapeHtml(row.item)}</strong>
-          <span>${escapeHtml(row.nombre)}</span>
-          <span class="mov-line-qty">Cantidad: ${row.cantidad}</span>
-          ${row.batchId ? `<span class="note">(${escapeHtml(row.batchId)})</span>` : ''}
+    const detailRows = [...group.rows]
+      .sort((a, b) => String(a.item || '').localeCompare(String(b.item || '')))
+      .map(row => `
+        <div class="mov-line-item">
+          <div class="mov-col-item">${escapeHtml(row.item)}</div>
+          <div class="mov-col-name">${escapeHtml(row.nombre)}</div>
+          <div class="mov-col-qty">${row.cantidad}</div>
+          <button type="button" class="btn-delete-mov-line" data-group-index="${idx}" data-mov-id="${row.id}" title="Eliminar esta línea y revertir stock" hidden>Eliminar</button>
         </div>
-        <button type="button" class="btn-delete-mov-line" data-group-index="${idx}" data-mov-id="${row.id}" title="Eliminar esta línea y revertir stock" hidden>Eliminar</button>
-      </li>
-    `).join('');
+      `).join('');
     return `
       <tr class="mov-hist-row">
         <td>${escapeHtml(group.fecha || '')}</td>
@@ -2631,7 +2633,12 @@ async function refreshMovimientosTable(filterDesde, filterHasta) {
                 <button type="button" class="secondary btn-mov-edit" data-group-index="${idx}">Editar</button>
                 <button type="button" class="btn-mov-done" data-group-index="${idx}" hidden>Listo</button>
               </div>
-              <ul class="mov-lines-list">${detailsList}</ul>
+              <div class="mov-detail-head">
+                <span>ITEM</span>
+                <span>Nombre</span>
+                <span>Cantidad</span>
+              </div>
+              <div class="mov-lines-list">${detailRows}</div>
             </div>
           </details>
         </td>
@@ -2702,10 +2709,10 @@ function renderMovHistPagination() {
   html += `<span class="mov-page-info">${total} dia${total !== 1 ? 's' : ''} con movimientos</span>`;
   pag.innerHTML = html;
 
-  pag.querySelector('.mov-page-prev')?.addEventListener('click', () => { movHistPage--; refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value); });
-  pag.querySelector('.mov-page-next')?.addEventListener('click', () => { movHistPage++; refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value); });
+  pag.querySelector('.mov-page-prev')?.addEventListener('click', () => { movHistPage--; refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value, movHistItem?.value); });
+  pag.querySelector('.mov-page-next')?.addEventListener('click', () => { movHistPage++; refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value, movHistItem?.value); });
   pag.querySelectorAll('.mov-page-btn').forEach(btn => {
-    btn.addEventListener('click', () => { movHistPage = parseInt(btn.dataset.page); refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value); });
+    btn.addEventListener('click', () => { movHistPage = parseInt(btn.dataset.page); refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value, movHistItem?.value); });
   });
 }
 
@@ -2722,20 +2729,21 @@ function initMovTabs() {
       // Refresh historial when switching to it
       if (tab.dataset.movView === 'movHistView') {
         movHistPage = 1;
-        refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value);
+        refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value, movHistItem?.value);
       }
     });
   });
   // Historial filter buttons
   document.getElementById('movHistFiltrar')?.addEventListener('click', () => {
     movHistPage = 1;
-    refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value);
+    refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value, movHistItem?.value);
   });
   document.getElementById('movHistLimpiar')?.addEventListener('click', () => {
     const desde = document.getElementById('movHistDesde');
     const hasta = document.getElementById('movHistHasta');
     if (desde) desde.value = '';
     if (hasta) hasta.value = '';
+    if (movHistItem) movHistItem.value = '';
     movHistPage = 1;
     refreshMovimientosTable();
   });
@@ -2751,7 +2759,15 @@ function initMovTabs() {
       if (desde) desde.value = '';
       if (hasta) hasta.value = '';
     }
-    refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value);
+    refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value, movHistItem?.value);
+  });
+
+  movHistItem?.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      movHistPage = 1;
+      refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value, movHistItem?.value);
+    }
   });
 }
 

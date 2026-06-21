@@ -293,11 +293,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 #movTabla details summary { cursor: pointer; color: var(--blue-700); font-weight: 600; }
 #movTabla details ul { color: var(--ink-600); }
 #movTabla .mov-group-detail {
-  margin-top: 8px;
-  padding: 8px;
+  margin-top: 10px;
+  padding: 12px;
   border: 1px solid var(--blue-100);
-  border-radius: 10px;
-  background: var(--blue-50);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(239,246,255,0.95), rgba(248,250,252,0.95));
 }
 #movTabla .mov-group-detail.editing {
   border-color: var(--blue-500);
@@ -310,32 +310,58 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   margin-bottom: 8px;
 }
 #movTabla .mov-lines-list {
-  list-style: none;
+  display: grid;
+  gap: 6px;
   margin: 0;
   padding: 0;
 }
+#movTabla .mov-detail-head {
+  display: grid;
+  grid-template-columns: 130px minmax(180px, 1fr) 110px;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.8);
+  border: 1px solid rgba(148,163,184,0.25);
+  color: var(--ink-500);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.35px;
+}
+#movTabla .mov-detail-head span:last-child {
+  text-align: right;
+}
 #movTabla .mov-line-item {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 130px minmax(180px, 1fr) 110px auto;
   align-items: center;
   gap: 10px;
-  padding: 8px;
-  border-bottom: 1px solid var(--border);
+  padding: 10px;
+  border: 1px solid rgba(148,163,184,0.22);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.82);
 }
-#movTabla .mov-line-item:last-child { border-bottom: none; }
-#movTabla .mov-line-main {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+#movTabla .mov-col-item {
+  font-weight: 700;
+  color: var(--ink-700);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
-#movTabla .mov-line-qty {
+#movTabla .mov-col-name {
+  color: var(--ink-600);
+}
+#movTabla .mov-col-qty {
   font-weight: 600;
   color: var(--ink-700);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 #movTabla .btn-delete-mov-line {
-  margin-left: 8px;
-  padding: 4px 8px;
+  justify-self: end;
+  margin-left: 0;
+  padding: 5px 10px;
   font-size: 12px;
   border-radius: 8px;
   border: 1px solid #ef4444;
@@ -343,6 +369,15 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   color: #991b1b;
 }
 #movTabla .btn-delete-mov-line:hover { background: #fecaca; }
+[data-theme="dark"] #movTabla .mov-group-detail {
+  background: linear-gradient(180deg, rgba(30,41,59,0.88), rgba(15,23,42,0.88));
+  border-color: rgba(148,163,184,0.25);
+}
+[data-theme="dark"] #movTabla .mov-detail-head,
+[data-theme="dark"] #movTabla .mov-line-item {
+  background: rgba(15,23,42,0.65);
+  border-color: rgba(148,163,184,0.25);
+}
 
 /* ── Movimientos: Tabs & Layout ── */
 .mov-tabs {
@@ -629,6 +664,19 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   .mov-recent-line {
     flex-direction: column;
     align-items: flex-start;
+  }
+  #movTabla .mov-detail-head {
+    display: none;
+  }
+  #movTabla .mov-line-item {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  #movTabla .mov-col-qty {
+    text-align: left;
+  }
+  #movTabla .btn-delete-mov-line {
+    justify-self: start;
   }
 }
 
