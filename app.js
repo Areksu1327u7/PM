@@ -5,7 +5,7 @@ supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let liveRefreshTimer = null;
 let productsRealtimeChannel = null;
-let currentSectionId = 'ingresoSection';
+let currentSectionId = 'homeSection';
 let inventoryAutoRefreshTimer = null;
 let inventoryEditingItems = new Set();
 let inventoryPendingSync = false;
@@ -275,7 +275,7 @@ async function seedIfEmpty() {
   }
   const { data: rolesRow } = await supabase.from('roles_matrix').select('id').limit(1).maybeSingle();
   if (!rolesRow) {
-    const modules = ['Ingreso', 'Movimientos', 'Ventas', 'Inventario', 'Dashboard', 'Administrador'];
+    const modules = ['Home', 'Ingreso', 'Movimientos', 'Ventas', 'Inventario', 'Dashboard', 'Administrador'];
     const rolesList = ['Admin', 'Vendedor', 'Almacenero'];
     const matrix = {};
     rolesList.forEach(r => { matrix[r] = {}; modules.forEach(m => matrix[r][m] = true); });
@@ -291,6 +291,16 @@ const fxParallelMidEl = document.getElementById('fxParallelMid');
 const fxStatusEl = document.getElementById('fxStatus');
 const fxUpdatedAtEl = document.getElementById('fxUpdatedAt');
 const fxRefreshBtn = document.getElementById('fxRefreshBtn');
+const homeCurrentTimeEl = document.getElementById('homeCurrentTime');
+const homeCurrentDateEl = document.getElementById('homeCurrentDate');
+const homeWeatherStatusEl = document.getElementById('homeWeatherStatus');
+const homeWeatherTempEl = document.getElementById('homeWeatherTemp');
+const homeWeatherTextEl = document.getElementById('homeWeatherText');
+const homeWeatherUpdatedEl = document.getElementById('homeWeatherUpdated');
+const homeMatchesNextEl = document.getElementById('homeMatchesNext');
+const homeMatchesTodayEl = document.getElementById('homeMatchesToday');
+const homeMatchesNextStatusEl = document.getElementById('homeMatchesNextStatus');
+const homeMatchesTodayStatusEl = document.getElementById('homeMatchesTodayStatus');
 
 function fxFmt(n, decimals = 4) {
   const v = Number(n);
@@ -547,14 +557,198 @@ async function refreshFxWidget() {
 
 fxRefreshBtn?.addEventListener('click', refreshFxWidget);
 
+function updateHomeClock() {
+  const now = new Date();
+  if (homeCurrentTimeEl) homeCurrentTimeEl.textContent = now.toLocaleTimeString('es-BO', { hour12: false });
+  if (homeCurrentDateEl) {
+    homeCurrentDateEl.textContent = now.toLocaleDateString('es-BO', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  }
+}
+
+function weatherCodeToText(code) {
+  const map = {
+    0: 'Despejado',
+    1: 'Mayormente despejado',
+    2: 'Parcialmente nublado',
+    3: 'Nublado',
+    45: 'Niebla',
+    48: 'Niebla con escarcha',
+    51: 'Llovizna ligera',
+    53: 'Llovizna moderada',
+    55: 'Llovizna intensa',
+    61: 'Lluvia ligera',
+    63: 'Lluvia moderada',
+    65: 'Lluvia intensa',
+    71: 'Nieve ligera',
+    73: 'Nieve moderada',
+    75: 'Nieve intensa',
+    80: 'Chubascos ligeros',
+    81: 'Chubascos moderados',
+    82: 'Chubascos intensos',
+    95: 'Tormenta',
+    96: 'Tormenta con granizo',
+    99: 'Tormenta fuerte con granizo'
+  };
+  return map[Number(code)] || 'Sin dato';
+}
+
+async function refreshHomeWeather() {
+  if (!homeWeatherTempEl || !homeWeatherTextEl) return;
+  try {
+    if (homeWeatherStatusEl) homeWeatherStatusEl.textContent = 'Actualizando...';
+    const url = 'https://api.open-meteo.com/v1/forecast?latitude=-16.5&longitude=-68.15&current=temperature_2m,weather_code&timezone=auto';
+    const res = await fetchJsonWithTimeout(url, {}, 9000);
+    if (!res.ok) throw new Error('weather http error');
+    const data = await res.json();
+    const temp = Number(data?.current?.temperature_2m);
+    const code = Number(data?.current?.weather_code);
+    homeWeatherTempEl.textContent = Number.isFinite(temp) ? `${temp.toFixed(1)}°C` : '--°C';
+    homeWeatherTextEl.textContent = weatherCodeToText(code);
+    if (homeWeatherStatusEl) homeWeatherStatusEl.textContent = 'La Paz';
+    if (homeWeatherUpdatedEl) {
+      homeWeatherUpdatedEl.textContent = `Actualizado: ${new Date().toLocaleTimeString('es-BO')}`;
+    }
+  } catch (e) {
+    console.warn('weather error', e);
+    if (homeWeatherStatusEl) homeWeatherStatusEl.textContent = 'Sin conexión';
+    homeWeatherTextEl.textContent = 'No se pudo cargar el clima';
+  }
+}
+
+function toDateYmd(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function isWorldCupEvent(ev) {
+  const text = `${ev?.strLeague || ''} ${ev?.strEvent || ''}`.toLowerCase();
+  return text.includes('world cup') || text.includes('mundial');
+}
+
+function formatEventDateTimeBo(ev) {
+  const boTimeZone = 'America/La_Paz';
+  const dateRaw = String(ev?.dateEvent || '').trim();
+  const timeRaw = String(ev?.strTime || '').trim();
+  const tsRaw = String(ev?.strTimestamp || '').trim();
+
+  let parsed = null;
+  if (tsRaw) {
+    const hasTimeZone = /Z$|[+-]\d{2}:?\d{2}$/.test(tsRaw);
+    const fromTs = new Date(hasTimeZone ? tsRaw : `${tsRaw}Z`);
+    if (!Number.isNaN(fromTs.getTime())) parsed = fromTs;
+  }
+  if (!parsed && dateRaw && timeRaw) {
+    // TheSportsDB usually returns UTC time. We force UTC to display correct BO local time.
+    const isoUtc = `${dateRaw}T${timeRaw.replace(' ', '')}Z`;
+    const fromParts = new Date(isoUtc);
+    if (!Number.isNaN(fromParts.getTime())) parsed = fromParts;
+  }
+  if (!parsed && dateRaw) {
+    const fromDate = new Date(`${dateRaw}T00:00:00Z`);
+    if (!Number.isNaN(fromDate.getTime())) parsed = fromDate;
+  }
+
+  if (!parsed) return [dateRaw, timeRaw].filter(Boolean).join(' ').trim();
+
+  const dateBo = parsed.toLocaleDateString('es-BO', {
+    timeZone: boTimeZone,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+  const timeBo = parsed.toLocaleTimeString('es-BO', {
+    timeZone: boTimeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+  return `${dateBo} ${timeBo} (BO)`;
+}
+
+function renderMatchesList(container, list, opts = {}) {
+  if (!container) return;
+  if (!list?.length) {
+    container.innerHTML = `<div class="home-empty">${opts.emptyText || 'Sin datos disponibles por ahora.'}</div>`;
+    return;
+  }
+  container.innerHTML = list.map(ev => {
+    const hasScore = ev.intHomeScore !== null && ev.intHomeScore !== undefined;
+    const home = ev.strHomeTeam || 'Local';
+    const away = ev.strAwayTeam || 'Visitante';
+    const dateText = formatEventDateTimeBo(ev);
+    const score = hasScore
+      ? `${ev.intHomeScore ?? 0} - ${ev.intAwayScore ?? 0}`
+      : 'vs';
+    return `
+      <div class="home-match-row">
+        <div class="home-match-teams">${home} <strong>${score}</strong> ${away}</div>
+        <div class="home-match-meta">${dateText || 'Horario por confirmar'}${ev.strLeague ? ` • ${ev.strLeague}` : ''}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function refreshWorldCupCards() {
+  if (homeMatchesNextStatusEl) homeMatchesNextStatusEl.textContent = 'Actualizando...';
+  if (homeMatchesTodayStatusEl) homeMatchesTodayStatusEl.textContent = 'Actualizando...';
+
+  let nextEvents = [];
+  let todayEvents = [];
+  try {
+    const [nextRes, dayRes] = await Promise.all([
+      fetchJsonWithTimeout('https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=4429', {}, 10000),
+      fetchJsonWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${toDateYmd()}&s=Soccer`, {}, 10000)
+    ]);
+
+    if (nextRes.ok) {
+      const nextData = await nextRes.json();
+      nextEvents = (nextData?.events || []).slice(0, 8);
+    }
+
+    if (dayRes.ok) {
+      const dayData = await dayRes.json();
+      const allDay = dayData?.events || [];
+      todayEvents = allDay.filter(isWorldCupEvent).slice(0, 8);
+    }
+
+    if (!todayEvents.length && nextEvents.length) {
+      const today = toDateYmd();
+      todayEvents = nextEvents.filter(ev => String(ev.dateEvent || '') === today && ev.intHomeScore !== null).slice(0, 8);
+    }
+
+    renderMatchesList(homeMatchesNextEl, nextEvents, { emptyText: 'No se encontraron próximos partidos del Mundial.' });
+    renderMatchesList(homeMatchesTodayEl, todayEvents, { emptyText: 'No hay resultados del Mundial para hoy.' });
+
+    if (homeMatchesNextStatusEl) homeMatchesNextStatusEl.textContent = nextEvents.length ? `${nextEvents.length} partidos` : 'Sin datos';
+    if (homeMatchesTodayStatusEl) homeMatchesTodayStatusEl.textContent = todayEvents.length ? `${todayEvents.length} partidos` : 'Sin resultados';
+  } catch (e) {
+    console.warn('world cup cards error', e);
+    renderMatchesList(homeMatchesNextEl, [], { emptyText: 'No fue posible cargar próximos partidos en este momento.' });
+    renderMatchesList(homeMatchesTodayEl, [], { emptyText: 'No fue posible cargar resultados del día en este momento.' });
+    if (homeMatchesNextStatusEl) homeMatchesNextStatusEl.textContent = 'Sin conexión';
+    if (homeMatchesTodayStatusEl) homeMatchesTodayStatusEl.textContent = 'Sin conexión';
+  }
+}
+
 // Navegación
 const navButtons = document.querySelectorAll('.nav-btn[data-target]');
 navButtons.forEach(btn => btn.addEventListener('click', () => showSection(btn.dataset.target)));
 function showSection(id) {
   currentSectionId = id;
   document.querySelectorAll('.page-section').forEach(s => s.hidden = s.id !== id);
-  const fxPanel = document.getElementById('fxPanel');
-  if (fxPanel) fxPanel.hidden = id !== 'dashboardSection';
+  if (id === 'realizarVentaSection') {
+    const saleNumInput = document.getElementById('venNum');
+    if (saleNumInput && !String(saleNumInput.value || '').trim()) {
+      setAutoSaleNumber();
+    }
+  }
   if (id === 'inventarioSection') {
     refreshInventoryLiveView();
   }
@@ -576,7 +770,7 @@ function setAutoSaleNumber() {
 }
 
 // Mostrar sección por defecto
-showSection('ingresoSection');
+showSection('homeSection');
 
 // Referencias ingreso
 const ingItemsDiv = document.getElementById('ingItems');
@@ -602,6 +796,8 @@ const venImprimirBtn = document.getElementById('venImprimir');
 const venGuardarBtn = document.getElementById('venGuardar');
 const ventaComprobante = document.getElementById('ventaComprobante');
 const ventaComprobanteBody = document.getElementById('ventaComprobanteBody');
+let ventaSubmitInProgress = false;
+let ventaEditSaveInProgress = false;
 
 // Inventario
 const invBuscar = document.getElementById('invBuscar');
@@ -802,13 +998,14 @@ async function upsertProduct(p) {
       }).eq('id', p.id);
       if (error) console.error('update product error', error);
     } else {
-      // Check if a product with same item+nombre exists to update instead of insert
+      // Match by item to avoid accidental duplicates when the product name changes.
       const { data: existing, error: selErr } = await supabase
         .from('products').select('id')
-        .eq('item', p.item).eq('nombre', p.nombre).limit(1);
+        .eq('item', p.item).limit(1);
       if (!selErr && existing && existing.length) {
         const id = existing[0].id;
         const { error } = await supabase.from('products').update({
+          nombre: p.nombre,
           categoria: p.categoria,
           ceja: p.ceja,
           senkata: p.senkata,
@@ -824,6 +1021,82 @@ async function upsertProduct(p) {
   } catch (e) {
     console.error('upsertProduct exception', e);
   }
+}
+
+async function applyStockDeltaAtomicById(productId, deltaCeja, deltaSenkata, options = {}) {
+  const maxRetries = Number(options.maxRetries || 5);
+  const minCeja = Number(options.minCeja ?? -Infinity);
+  const minSenkata = Number(options.minSenkata ?? -Infinity);
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const { data: current, error: currentErr } = await supabase
+      .from('products')
+      .select('id, ceja, senkata')
+      .eq('id', productId)
+      .maybeSingle();
+
+    if (currentErr || !current) {
+      return { ok: false, reason: 'product-not-found', error: currentErr };
+    }
+
+    const curCeja = Number(current.ceja || 0);
+    const curSenkata = Number(current.senkata || 0);
+    const nextCeja = curCeja + Number(deltaCeja || 0);
+    const nextSenkata = curSenkata + Number(deltaSenkata || 0);
+
+    if (nextCeja < minCeja) {
+      return { ok: false, reason: 'insufficient-ceja', current: curCeja, required: minCeja, next: nextCeja };
+    }
+    if (nextSenkata < minSenkata) {
+      return { ok: false, reason: 'insufficient-senkata', current: curSenkata, required: minSenkata, next: nextSenkata };
+    }
+
+    const { data: updated, error: updErr } = await supabase
+      .from('products')
+      .update({ ceja: nextCeja, senkata: nextSenkata })
+      .eq('id', productId)
+      .eq('ceja', curCeja)
+      .eq('senkata', curSenkata)
+      .select('id, ceja, senkata')
+      .maybeSingle();
+
+    if (updErr) {
+      return { ok: false, reason: 'update-error', error: updErr };
+    }
+    if (updated) {
+      return { ok: true, product: updated };
+    }
+  }
+
+  return { ok: false, reason: 'concurrency-retry-exhausted' };
+}
+
+function normalizeItemKey(item) {
+  return String(item || '').trim().toLowerCase();
+}
+
+function aggregateSaleItems(rawItems) {
+  const map = new Map();
+  for (const it of rawItems) {
+    const key = normalizeItemKey(it.item);
+    if (!key || !Number.isFinite(it.cantidad) || it.cantidad <= 0) continue;
+    const qty = Number(it.cantidad || 0);
+    const price = Number(it.precioVenta || 0);
+    const subtotal = qty * price;
+    if (!map.has(key)) {
+      map.set(key, { item: String(it.item || '').trim(), cantidad: qty, subtotal, lastPrice: price });
+    } else {
+      const prev = map.get(key);
+      prev.cantidad += qty;
+      prev.subtotal += subtotal;
+      prev.lastPrice = price;
+    }
+  }
+  return Array.from(map.values()).map(it => ({
+    item: it.item,
+    cantidad: it.cantidad,
+    precioVenta: it.cantidad > 0 ? Number((it.subtotal / it.cantidad).toFixed(4)) : Number(it.lastPrice || 0)
+  }));
 }
 
 // Movimientos (Supabase)
@@ -970,67 +1243,116 @@ ingLimpiarBtn.addEventListener('click', () => {
 // Guardar venta (solo desde CEJA) con descuento
 formVenta.addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (ventaSubmitInProgress) return;
   const num = document.getElementById('venNum').value.trim();
   const fecha = document.getElementById('venFecha').value;
   const cliente = document.getElementById('venCliente').value.trim();
   let descuentoPct = parseFloat((document.getElementById('venDescPct').value || '0')); 
   if (isNaN(descuentoPct) || descuentoPct < 0) descuentoPct = 0;
   const filas = Array.from(venItemsDiv.querySelectorAll('tr'));
-  const items = filas.map(r => ({
+  const rawItems = filas.map(r => ({
     item: r.querySelector('.ven-sku')?.value.trim() || '',
     cantidad: parseInt(r.querySelector('.ven-cant')?.value || '0', 10),
     precioVenta: parseFloat(r.querySelector('.ven-pvent')?.value || '0'),
   })).filter(it => it.item && it.cantidad > 0);
+  const items = aggregateSaleItems(rawItems);
   if (!num || !fecha || !cliente || items.length === 0) {
     alert('Complete datos del comprobante y al menos una línea válida.');
     return;
   }
-  // Validar stock y actualizar inventario
-  const products = await allProducts();
-  for (const it of items) {
-    const p = products.find(x => x.item.trim().toLowerCase() === it.item.trim().toLowerCase());
-    if (!p) { alert(`Producto ${it.item} no existe.`); return; }
-    if ((p.ceja ?? 0) < it.cantidad) { alert(`Stock CEJA insuficiente para ${p.nombre} (Disponible: ${p.ceja}).`); return; }
-  }
-  // Actualizar CEJA
-  for (const it of items) {
-    const p = products.find(x => x.item.trim().toLowerCase() === it.item.trim().toLowerCase());
-    await upsertProduct({ id: p.id, item: p.item, nombre: p.nombre, categoria: p.categoria, unidad: p.unidad, precio: p.precio || it.precioVenta, ceja: (p.ceja || 0) - it.cantidad, senkata: p.senkata || 0 });
-  }
-  const detailedItems = items.map(it => {
-    const p = products.find(x => x.item.trim().toLowerCase() === it.item.trim().toLowerCase());
-    return { item: it.item, nombre: p?.nombre ?? it.item, cantidad: it.cantidad, precioVenta: it.precioVenta };
-  });
-  let total = detailedItems.reduce((acc, it) => acc + it.precioVenta * it.cantidad, 0);
-  const descuento = (total * descuentoPct) / 100;
-  const totalConDesc = total - descuento;
-  // update totals UI
-  setVentaTotals(total, descuento, totalConDesc);
-  await addMovement({ tipo: 'venta', fecha, item: '-', nombre: cliente, cantidad: detailedItems.reduce((a,i)=>a+i.cantidad,0), detalle: `Venta comprobante ${num}`, total: totalConDesc, descuento });
-  // Persist sale into sales tables (if present)
+
+  ventaSubmitInProgress = true;
+  if (venGuardarBtn) venGuardarBtn.disabled = true;
+  const appliedDeltas = [];
   try {
+    // Re-read product data right before committing stock changes.
+    const products = await allProducts();
+    const byItem = new Map(products.map(p => [normalizeItemKey(p.item), p]));
+
+    const detailedItems = [];
+    for (const it of items) {
+      const p = byItem.get(normalizeItemKey(it.item));
+      if (!p) throw new Error(`Producto ${it.item} no existe.`);
+      detailedItems.push({ item: p.item, nombre: p?.nombre ?? it.item, cantidad: it.cantidad, precioVenta: it.precioVenta, productId: p.id });
+    }
+
+    const subtotal = detailedItems.reduce((acc, it) => acc + it.precioVenta * it.cantidad, 0);
+    const descuento = (subtotal * descuentoPct) / 100;
+    const totalConDesc = subtotal - descuento;
+
+    // Apply stock changes first with optimistic concurrency and hard non-negative checks.
+    for (const it of detailedItems) {
+      const res = await applyStockDeltaAtomicById(it.productId, -it.cantidad, 0, { minCeja: 0 });
+      if (!res.ok) {
+        if (res.reason === 'insufficient-ceja') {
+          throw new Error(`Stock CEJA insuficiente para ${it.nombre} (ITEM ${it.item}). Disponible: ${res.current}`);
+        }
+        throw new Error(`No se pudo actualizar stock para ${it.item} (${res.reason}).`);
+      }
+      appliedDeltas.push({ productId: it.productId, ceja: it.cantidad, senkata: 0 });
+    }
+
+    // Persist sales rows; if this fails, rollback stock to avoid drift.
     const { data: saleRow, error: saleErr } = await supabase
       .from('sales')
-      .insert({ numero: num, fecha, cliente, subtotal: total, descuento_pct: descuentoPct, descuento, total: totalConDesc })
-      .select('id').single();
-    if (!saleErr && saleRow?.id) {
-      const itemsRows = detailedItems.map(di => ({ sale_id: saleRow.id, item: di.item, nombre: di.nombre, cantidad: di.cantidad, precio: di.precioVenta, subtotal: di.precioVenta * di.cantidad }));
-      await supabase.from('sales_items').insert(itemsRows);
+      .insert({ numero: num, fecha, cliente, subtotal, descuento_pct: descuentoPct, descuento, total: totalConDesc })
+      .select('id')
+      .single();
+    if (saleErr || !saleRow?.id) {
+      throw new Error('No se pudo registrar la cabecera de venta.');
     }
-  } catch (se) { console.error('save sale error', se); }
-  renderComprobante('venta', { comprobante: { numero: num, fecha, entidad: cliente }, items: detailedItems, total: totalConDesc }, ventaComprobanteBody, ventaComprobante);
-  venImprimirBtn.disabled = false;
-  if (venGuardarBtn) {
-    venGuardarBtn.disabled = true;
-    venGuardarBtn.setAttribute('data-hint', 'Guardado. Usa «Limpiar» para habilitar.');
-    venGuardarBtn.title = 'Guardado. Usa «Limpiar» para habilitar.';
+
+    const itemsRows = detailedItems.map(di => ({
+      sale_id: saleRow.id,
+      item: di.item,
+      nombre: di.nombre,
+      cantidad: di.cantidad,
+      precio: di.precioVenta,
+      subtotal: di.precioVenta * di.cantidad
+    }));
+    const { error: itemsErr } = await supabase.from('sales_items').insert(itemsRows);
+    if (itemsErr) {
+      await supabase.from('sales').delete().eq('id', saleRow.id);
+      throw new Error('No se pudieron registrar los ítems de la venta.');
+    }
+
+    await addMovement({
+      tipo: 'venta',
+      fecha,
+      item: '-',
+      nombre: cliente,
+      cantidad: detailedItems.reduce((a, i) => a + i.cantidad, 0),
+      detalle: `Venta comprobante ${num}`,
+      total: totalConDesc,
+      descuento
+    });
+
+    setVentaTotals(subtotal, descuento, totalConDesc);
+    renderComprobante('venta', { comprobante: { numero: num, fecha, entidad: cliente }, items: detailedItems, total: totalConDesc }, ventaComprobanteBody, ventaComprobante);
+    venImprimirBtn.disabled = false;
+    if (venGuardarBtn) {
+      venGuardarBtn.disabled = true;
+      venGuardarBtn.setAttribute('data-hint', 'Guardado. Usa «Limpiar» para habilitar.');
+      venGuardarBtn.title = 'Guardado. Usa «Limpiar» para habilitar.';
+    }
+    alert('Venta guardada. Inventario actualizado.');
+    await refreshInventoryUI();
+    await refreshDashboard();
+    await refreshMovDatalist();
+    await refreshVentasHistorial();
+    setAutoSaleNumber();
+  } catch (err) {
+    console.error('sale submit error', err);
+    // Best-effort rollback to preserve CEJA if sale persistence failed midway.
+    for (let i = appliedDeltas.length - 1; i >= 0; i--) {
+      const rb = appliedDeltas[i];
+      await applyStockDeltaAtomicById(rb.productId, rb.ceja, rb.senkata, { minCeja: 0 });
+    }
+    alert(err?.message || 'No se pudo guardar la venta.');
+    if (venGuardarBtn) venGuardarBtn.disabled = false;
+  } finally {
+    ventaSubmitInProgress = false;
   }
-  alert('Venta guardada. Inventario actualizado.');
-  await refreshInventoryUI();
-  await refreshDashboard();
-  await refreshMovDatalist();
-  await refreshVentasHistorial();
-  setAutoSaleNumber();
 });
 
 venLimpiarBtn.addEventListener('click', async () => {
@@ -1976,7 +2298,9 @@ async function onVerDetallesVenta(e) {
     cancelBtn.onclick = () => exitEditMode(true);
 
     saveBtn.onclick = async () => {
-      if (!isEditing) return;
+      if (!isEditing || ventaEditSaveInProgress) return;
+      ventaEditSaveInProgress = true;
+      saveBtn.disabled = true;
       try {
         // Collect edits
         const tbody = body.querySelector('tbody');
@@ -1993,37 +2317,61 @@ async function onVerDetallesVenta(e) {
         const newRows = rows.filter(tr => tr.classList.contains('row-new'));
         // Validate inventory deltas
         const products = await allProducts();
+        const byItem = new Map(products.map(p => [normalizeItemKey(p.item), p]));
+        const stockDeltas = new Map();
+
+        const addDelta = (item, delta) => {
+          const key = normalizeItemKey(item);
+          stockDeltas.set(key, Number(stockDeltas.get(key) || 0) + Number(delta || 0));
+        };
+
         for (const ed of edits) {
-          const p = products.find(x => (x.item||'').toLowerCase() === (ed.sku||'').toLowerCase());
+          const p = byItem.get(normalizeItemKey(ed.sku));
           if (!p) { alert(`Producto no encontrado: ${ed.sku}`); return; }
           const delta = ed.newCant - ed.oldCant;
-          if (delta > 0 && (p.ceja || 0) < delta) { alert(`CEJA insuficiente para ${p.item}. Disponible: ${p.ceja}, requiere adicional: ${delta}`); return; }
+          addDelta(ed.sku, -delta);
         }
         for (const tr of newRows) {
           const sku = tr.querySelector('.edit-sku')?.value.trim();
           const cant = parseInt(tr.querySelector('.edit-cant')?.value || '0', 10);
           const precio = parseFloat(tr.querySelector('.edit-precio')?.value || '0');
           if (!sku || cant <= 0 || precio < 0) { alert('Complete SKU, cantidad y precio en el nuevo ítem'); return; }
-          const p = products.find(x => (x.item||'').toLowerCase() === sku.toLowerCase());
+          const p = byItem.get(normalizeItemKey(sku));
           if (!p) { alert(`Producto no encontrado: ${sku}`); return; }
-          if ((p.ceja || 0) < cant) { alert(`CEJA insuficiente para ${p.item}. Disponible: ${p.ceja}, requiere: ${cant}`); return; }
+          addDelta(sku, -cant);
         }
-        // Apply inventory updates and persist sales_items
-        for (const ed of edits) {
-          const p = products.find(x => (x.item||'').toLowerCase() === (ed.sku||'').toLowerCase());
-          const delta = ed.newCant - ed.oldCant;
-          if (delta !== 0) {
-            await upsertProduct({ id: p.id, item: p.item, nombre: p.nombre, categoria: p.categoria, unidad: p.unidad, precio: p.precio, ceja: (p.ceja || 0) - delta, senkata: p.senkata || 0 });
+        for (const rid of removedIds) {
+          const old = data.find(d => String(d.id) === String(rid));
+          if (old?.item) addDelta(old.item, (old.cantidad || 0));
+        }
+
+        // Validate against fresh stock snapshot before mutating.
+        for (const [itemKey, cejaDelta] of stockDeltas.entries()) {
+          const p = byItem.get(itemKey);
+          if (!p) continue;
+          const nextCeja = Number(p.ceja || 0) + Number(cejaDelta || 0);
+          if (nextCeja < 0) {
+            alert(`CEJA insuficiente para ${p.item}. Disponible: ${p.ceja}, variación requerida: ${cejaDelta}`);
+            return;
           }
+        }
+
+        const applied = [];
+        // Apply inventory updates and persist sales_items
+        for (const [itemKey, cejaDelta] of stockDeltas.entries()) {
+          if (!cejaDelta) continue;
+          const p = byItem.get(itemKey);
+          if (!p) continue;
+          const res = await applyStockDeltaAtomicById(p.id, cejaDelta, 0, { minCeja: 0 });
+          if (!res.ok) throw new Error(`No se pudo actualizar stock para ${p.item}.`);
+          applied.push({ productId: p.id, ceja: -cejaDelta });
+        }
+
+        for (const ed of edits) {
           await supabase.from('sales_items').update({ cantidad: ed.newCant, precio: ed.newPrecio, subtotal: ed.newCant * ed.newPrecio }).eq('id', ed.id);
         }
         // Removed rows: inventory rollback and delete
         for (const rid of removedIds) {
-          const old = data.find(d => String(d.id) === String(rid));
-          const p = products.find(x => (x.item||'').toLowerCase() === (old.item||'').toLowerCase());
-          if (p) {
-            await upsertProduct({ id: p.id, item: p.item, nombre: p.nombre, categoria: p.categoria, unidad: p.unidad, precio: p.precio, ceja: (p.ceja || 0) + (old.cantidad || 0), senkata: p.senkata || 0 });
-          }
           await supabase.from('sales_items').delete().eq('id', rid);
         }
         // New rows: inventory apply and insert
@@ -2031,8 +2379,7 @@ async function onVerDetallesVenta(e) {
           const sku = tr.querySelector('.edit-sku')?.value.trim();
           const cant = parseInt(tr.querySelector('.edit-cant')?.value || '0', 10);
           const precio = parseFloat(tr.querySelector('.edit-precio')?.value || '0');
-          const p = products.find(x => (x.item||'').toLowerCase() === sku.toLowerCase());
-          await upsertProduct({ id: p.id, item: p.item, nombre: p.nombre, categoria: p.categoria, unidad: p.unidad, precio: p.precio, ceja: (p.ceja || 0) - cant, senkata: p.senkata || 0 });
+          const p = byItem.get(normalizeItemKey(sku));
           await supabase.from('sales_items').insert({ sale_id: saleId, item: p.item, nombre: p.nombre, cantidad: cant, precio, subtotal: cant * precio });
         }
         // Recompute totals and update sale
@@ -2057,6 +2404,9 @@ async function onVerDetallesVenta(e) {
       } catch (err) {
         console.error('guardar edicion error', err);
         alert('No se pudieron guardar los cambios.');
+      } finally {
+        ventaEditSaveInProgress = false;
+        saveBtn.disabled = !isEditing;
       }
     };
 
@@ -2103,21 +2453,38 @@ async function onVerDetallesVenta(e) {
     };
     anularBtn.onclick = async () => {
       if (!confirm('¿Seguro que desea anular esta venta? Se revertirá el stock.')) return;
+      if (ventaEditSaveInProgress) return;
+      ventaEditSaveInProgress = true;
+      anularBtn.disabled = true;
       try {
         const products = await allProducts();
+        const byItem = new Map(products.map(p => [normalizeItemKey(p.item), p]));
         for (const it of data) {
-          const p = products.find(x => (x.item||'').toLowerCase() === (it.item||'').toLowerCase());
+          const p = byItem.get(normalizeItemKey(it.item));
           if (p) {
-            await upsertProduct({ id: p.id, item: p.item, nombre: p.nombre, categoria: p.categoria, unidad: p.unidad, precio: p.precio, ceja: (p.ceja||0) + (it.cantidad||0), senkata: p.senkata||0 });
+            const res = await applyStockDeltaAtomicById(p.id, (it.cantidad || 0), 0, { minCeja: 0 });
+            if (!res.ok) throw new Error(`No se pudo revertir stock para ${p.item}.`);
           }
         }
-        try { await supabase.from('sales').update({ estado: 'anulada' }).eq('id', saleId); } catch {}
+        try {
+          const { error: stErr } = await supabase.from('sales').update({ estado: 'anulada' }).eq('id', saleId);
+          if (stErr) throw stErr;
+        } catch {
+          // Fallback marker when schema does not include estado.
+          try {
+            await supabase.from('sales').update({ cliente: `${sale.cliente} (ANULADA)` }).eq('id', saleId);
+          } catch {}
+        }
         await addMovement({ tipo: 'venta', fecha: sale.fecha, item: '-', nombre: sale.cliente + ' (ANULADA)', cantidad: data.reduce((a,i)=>a+(i.cantidad||0),0), detalle: `Anulación comprobante ${sale.numero}`, total: 0, descuento: 0 });
         modal.hidden = true;
         await refreshInventoryUI();
         await refreshVentasHistorial();
         alert('Venta anulada y stock revertido.');
       } catch (e) { console.error('anular error', e); alert('No se pudo anular la venta.'); }
+      finally {
+        ventaEditSaveInProgress = false;
+        if (!isAnulada && !modal.hidden) anularBtn.disabled = false;
+      }
     };
     // backdrop and esc
     modal.onclick = (ev) => { if (ev.target === modal) modal.hidden = true; };
@@ -2786,23 +3153,18 @@ async function deleteMovimientoLinea(movId) {
         alert(`No se puede eliminar: CEJA actual (${p.ceja || 0}) es menor que la cantidad a revertir (${qty}).`);
         return;
       }
-      await upsertProduct({
-        id: p.id,
-        item: p.item,
-        nombre: p.nombre,
-        categoria: p.categoria,
-        unidad: p.unidad || 'PCS',
-        precio: p.precio || 0,
-        ceja: (p.ceja || 0) - qty,
-        senkata: (p.senkata || 0) + qty
-      });
+      const rev = await applyStockDeltaAtomicById(p.id, -qty, qty, { minCeja: 0, minSenkata: 0 });
+      if (!rev.ok) {
+        alert('No se pudo revertir stock de forma segura. Intente nuevamente.');
+        return;
+      }
     }
 
     const { error: delErr } = await supabase.from('movements').delete().eq('id', movId);
     if (delErr) { console.error('delete movement line error', delErr); alert('No se pudo eliminar la línea.'); return; }
 
     await refreshInventoryUI();
-    await refreshMovimientosTable();
+    await refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value, movHistItem?.value);
     await refreshDashboard();
     await refreshMovDatalist();
     alert('Línea del movimiento eliminada correctamente.');
@@ -2827,7 +3189,8 @@ formMov?.addEventListener('submit', async (e) => {
     const p = await findProductByITEM(item);
     if (!p) { alert(`Producto no encontrado: ${item}`); continue; }
     if ((p.senkata || 0) < cant) { alert(`SENKATA insuficiente para ${p.item} (${p.nombre}). Disp: ${p.senkata}`); continue; }
-    await upsertProduct({ id: p.id, item: p.item, nombre: p.nombre, categoria: p.categoria, unidad: p.unidad || 'PCS', precio: p.precio || 0, ceja: (p.ceja || 0) + cant, senkata: (p.senkata || 0) - cant });
+    const trRes = await applyStockDeltaAtomicById(p.id, cant, -cant, { minCeja: 0, minSenkata: 0 });
+    if (!trRes.ok) { alert(`No se pudo mover stock para ${p.item}.`); continue; }
     await addMovement({ tipo: 'transfer', fecha, item: p.item, nombre: p.nombre, cantidad: cant, detalle: `SENKATA → CEJA [MOV:${batchId}]`, total: 0, descuento: 0 });
     processed++;
   }
@@ -2866,6 +3229,12 @@ movLimpiar?.addEventListener('click', () => { formMov.reset(); if (movItemsTbody
     movItemsTbody.appendChild(newMovRow());
     renumberMovRows();
   });
+  updateHomeClock();
+  setInterval(updateHomeClock, 1000);
+  await refreshHomeWeather();
+  setInterval(refreshHomeWeather, 10 * 60 * 1000);
+  await refreshWorldCupCards();
+  setInterval(refreshWorldCupCards, 20 * 60 * 1000);
   await refreshFxWidget();
   setInterval(refreshFxWidget, 30000);
 })();

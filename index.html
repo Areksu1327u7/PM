@@ -17,6 +17,7 @@
       <h1>Importaciones MB</h1>
     </div>
     <nav class="nav">
+      <button class="nav-btn" data-target="homeSection">Home</button>
       <button class="nav-btn" data-target="ingresoSection">Ingreso de Productos</button>
       <button class="nav-btn" data-target="movSection">Movimientos (Senkata → Ceja)</button>
       <button class="nav-btn" data-target="realizarVentaSection">Realizar Venta</button>
@@ -28,6 +29,81 @@
   </header>
 
   <main class="container">
+    <section id="homeSection" class="page-section">
+      <div class="home-hero card">
+        <div>
+          <p class="home-eyebrow">Panel de bienvenida</p>
+          <h2>Bienvenido a Importaciones MB</h2>
+          <p class="note">Este Home muestra el estado del día para empezar rápido: hora local, clima y tipo de cambio.</p>
+        </div>
+        <div class="home-clock">
+          <div class="home-time" id="homeCurrentTime">--:--:--</div>
+          <div class="home-date" id="homeCurrentDate">--</div>
+        </div>
+      </div>
+
+      <div class="home-grid">
+        <div class="card home-card">
+          <div class="home-card-head">
+            <h3>Clima</h3>
+            <span id="homeWeatherStatus" class="note">Cargando...</span>
+          </div>
+          <div class="home-weather-main">
+            <div id="homeWeatherTemp" class="home-weather-temp">--°C</div>
+            <div id="homeWeatherText" class="home-weather-text">--</div>
+          </div>
+          <div class="home-weather-meta">
+            <span id="homeWeatherCity">La Paz, BO</span>
+            <span id="homeWeatherUpdated" class="note">--</span>
+          </div>
+        </div>
+
+        <div class="card home-card">
+          <div class="fx-header">
+            <h3>Tipo de Cambio</h3>
+            <button type="button" id="fxRefreshBtn" class="secondary">Actualizar</button>
+          </div>
+          <p class="note">Referencia de mercado paralelo (P2P) para mejor idealización del cambio.</p>
+          <div class="fx-grid">
+            <div class="fx-card">
+              <div class="fx-label">USDT / BOB (Compra)</div>
+              <div class="fx-value" id="fxParallelBuy">--</div>
+            </div>
+            <div class="fx-card">
+              <div class="fx-label">USDT / BOB (Venta)</div>
+              <div class="fx-value" id="fxParallelSell">--</div>
+            </div>
+            <div class="fx-card fx-card-strong">
+              <div class="fx-label">USDT / BOB (Promedio)</div>
+              <div class="fx-value" id="fxParallelMid">--</div>
+            </div>
+          </div>
+          <div class="fx-meta">
+            <span id="fxStatus" class="note">Cargando...</span>
+            <span id="fxUpdatedAt" class="note">--</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="home-matches-grid">
+        <div class="card home-card">
+          <div class="home-card-head">
+            <h3>Mundial: Próximos Partidos</h3>
+            <span id="homeMatchesNextStatus" class="note">Cargando...</span>
+          </div>
+          <div id="homeMatchesNext" class="home-list"></div>
+        </div>
+
+        <div class="card home-card">
+          <div class="home-card-head">
+            <h3>Partidos de Hoy (Resultados)</h3>
+            <span id="homeMatchesTodayStatus" class="note">Cargando...</span>
+          </div>
+          <div id="homeMatchesToday" class="home-list"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- Movimientos entre depósitos -->
     <section id="movSection" class="page-section" hidden>
       <h2>Movimiento de Productos (SENKATA → CEJA)</h2>
@@ -120,7 +196,7 @@
     </section>
 
     <!-- Ingreso de productos con comprobante -->
-    <section id="ingresoSection" class="page-section">
+    <section id="ingresoSection" class="page-section" hidden>
       <h2>Ingreso de Productos (Comprobante)</h2>
       <form id="formIngreso" class="card">
         <fieldset>
@@ -504,32 +580,6 @@
       </div>
     </section>
   </main>
-
-  <aside id="fxPanel" class="fx-panel" aria-live="polite" hidden>
-    <div class="fx-header">
-      <h3>Tipo de Cambio</h3>
-      <button type="button" id="fxRefreshBtn" class="secondary">Actualizar</button>
-    </div>
-    <p class="note">Referencia de mercado paralelo (P2P) para mejor idealización del cambio.</p>
-    <div class="fx-grid">
-      <div class="fx-card">
-        <div class="fx-label">USDT / BOB (Compra)</div>
-        <div class="fx-value" id="fxParallelBuy">--</div>
-      </div>
-      <div class="fx-card">
-        <div class="fx-label">USDT / BOB (Venta)</div>
-        <div class="fx-value" id="fxParallelSell">--</div>
-      </div>
-      <div class="fx-card fx-card-strong">
-        <div class="fx-label">USDT / BOB (Promedio)</div>
-        <div class="fx-value" id="fxParallelMid">--</div>
-      </div>
-    </div>
-    <div class="fx-meta">
-      <span id="fxStatus" class="note">Cargando...</span>
-      <span id="fxUpdatedAt" class="note">--</span>
-    </div>
-  </aside>
 
   <footer class="app-footer">
     <small>© 2025 Importaciones MB</small>
