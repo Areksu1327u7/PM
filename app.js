@@ -95,6 +95,24 @@ async function saveAllInventoryEdits() {
   const rows = table.querySelectorAll('tbody tr.inv-row-changed');
   if (!rows.length) { alert('No hay cambios para guardar.'); return; }
 
+  const editedItems = new Set();
+  for (const tr of rows) {
+    const originalItem = tr.dataset.item;
+    const orig = inventoryOriginalData.get(originalItem);
+    if (!orig) continue;
+    const editedItem = tr.querySelector('.edit-item')?.value.trim() || '';
+    if (!editedItem) {
+      alert(`El ITEM no puede estar vacío (${originalItem}).`);
+      return;
+    }
+    const key = editedItem.toLowerCase();
+    if (editedItems.has(key)) {
+      alert(`Hay ITEMs duplicados en la edición: ${editedItem}`);
+      return;
+    }
+    editedItems.add(key);
+  }
+
   table.classList.add('fading');
   const promises = [];
   for (const tr of rows) {
@@ -103,7 +121,7 @@ async function saveAllInventoryEdits() {
     if (!orig) continue;
     const updated = {
       id: orig.id,
-      item: item,
+      item: tr.querySelector('.edit-item')?.value.trim() || orig.item,
       nombre: tr.querySelector('.edit-nombre')?.value.trim() || orig.nombre,
       categoria: tr.querySelector('.edit-cat')?.value.trim() || 'General',
       ceja: parseInt(tr.querySelector('.edit-ceja')?.value || '0', 10),
@@ -161,7 +179,7 @@ function renderInventoryTableEditable(list) {
   invTabla.innerHTML = list.map((p, idx) => `
     <tr data-item="${escapeAttr(p.item)}">
       <td class="col-rownum">${idx + 1}</td>
-      <td>${escapeHtml(p.item)}</td>
+      <td><input type="text" value="${escapeAttr(p.item)}" class="edit-item" data-orig="${escapeAttr(p.item || '')}" /></td>
       <td><input type="text" value="${escapeAttr(p.nombre)}" class="edit-nombre" data-orig="${escapeAttr(p.nombre || '')}" /></td>
       <td><input type="text" value="${escapeAttr(p.categoria || '')}" class="edit-cat" data-orig="${escapeAttr(p.categoria || '')}" /></td>
       <td><input type="number" value="${p.ceja || 0}" min="0" class="edit-ceja" data-orig="${p.ceja || 0}" /></td>
@@ -740,6 +758,8 @@ async function refreshWorldCupCards() {
 // Navegación
 const navButtons = document.querySelectorAll('.nav-btn[data-target]');
 navButtons.forEach(btn => btn.addEventListener('click', () => showSection(btn.dataset.target)));
+const homeShortcutButtons = document.querySelectorAll('.home-shortcut-btn[data-go-section]');
+homeShortcutButtons.forEach(btn => btn.addEventListener('click', () => showSection(btn.dataset.goSection)));
 function showSection(id) {
   currentSectionId = id;
   document.querySelectorAll('.page-section').forEach(s => s.hidden = s.id !== id);
@@ -3233,8 +3253,6 @@ movLimpiar?.addEventListener('click', () => { formMov.reset(); if (movItemsTbody
   setInterval(updateHomeClock, 1000);
   await refreshHomeWeather();
   setInterval(refreshHomeWeather, 10 * 60 * 1000);
-  await refreshWorldCupCards();
-  setInterval(refreshWorldCupCards, 20 * 60 * 1000);
   await refreshFxWidget();
   setInterval(refreshFxWidget, 30000);
 })();

@@ -85,21 +85,30 @@
         </div>
       </div>
 
-      <div class="home-matches-grid">
+      <div class="home-actions-grid">
         <div class="card home-card">
           <div class="home-card-head">
-            <h3>Mundial: Próximos Partidos</h3>
-            <span id="homeMatchesNextStatus" class="note">Cargando...</span>
+            <h3>Accesos Rápidos</h3>
+            <span class="note">Flujo diario</span>
           </div>
-          <div id="homeMatchesNext" class="home-list"></div>
+          <div class="home-shortcuts">
+            <button type="button" class="home-shortcut-btn" data-go-section="ingresoSection">Registrar Ingreso</button>
+            <button type="button" class="home-shortcut-btn" data-go-section="realizarVentaSection">Registrar Venta</button>
+            <button type="button" class="home-shortcut-btn" data-go-section="movSection">Mover Stock</button>
+            <button type="button" class="home-shortcut-btn" data-go-section="inventarioSection">Revisar Inventario</button>
+          </div>
         </div>
 
-        <div class="card home-card">
+        <div class="card home-card home-pro-card">
           <div class="home-card-head">
-            <h3>Partidos de Hoy (Resultados)</h3>
-            <span id="homeMatchesTodayStatus" class="note">Cargando...</span>
+            <h3>Centro Operativo</h3>
+            <span class="note">Enfoque del día</span>
           </div>
-          <div id="homeMatchesToday" class="home-list"></div>
+          <ul class="home-focus-list">
+            <li>Verifica stock crítico antes de abrir ventas.</li>
+            <li>Actualiza precios después de cambios en el tipo de cambio.</li>
+            <li>Confirma movimientos SENKATA → CEJA al finalizar la jornada.</li>
+          </ul>
         </div>
       </div>
     </section>
