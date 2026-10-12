@@ -21,9 +21,11 @@
       <button class="nav-btn" data-target="ingresoSection">Ingreso de Productos</button>
       <button class="nav-btn" data-target="movSection">Movimientos (Senkata → Ceja)</button>
       <button class="nav-btn" data-target="realizarVentaSection">Realizar Venta</button>
+      <button class="nav-btn" data-target="cotizacionSection">Cotización</button>
       <button class="nav-btn" data-target="ventasHistSection">Historial Ventas</button>
       <button class="nav-btn" data-target="inventarioSection">Inventario</button>
       <button class="nav-btn" data-target="dashboardSection">Dashboard</button>
+      <button class="nav-btn nav-btn-highlight" data-target="predictionSection">Predecir Dólar (Beta)</button>
       <button class="nav-btn" data-target="adminSection">Administrador</button>
     </nav>
   </header>
@@ -321,6 +323,87 @@
       </div>
     </section>
 
+    <!-- Cotización -->
+    <section id="cotizacionSection" class="page-section" hidden>
+      <h2>Cotización</h2>
+      <form id="formCotizacion" class="card" novalidate>
+        <div class="cot-head">
+          <span id="cotModo" class="badge badge-ok">Nueva cotización</span>
+          <span class="note">Las cotizaciones se guardan en este navegador y se eliminan automáticamente a los 3 días.</span>
+        </div>
+        <fieldset>
+          <legend>Datos de la cotización</legend>
+          <div class="grid-3">
+            <label>N° Cotización
+              <input type="text" id="cotNum" readonly />
+            </label>
+            <label>Cliente
+              <input type="text" id="cotCliente" placeholder="Nombre del cliente (opcional)" />
+            </label>
+            <label>Descuento (%)
+              <input type="number" id="cotDescPct" min="0" max="100" step="0.01" placeholder="0" />
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Productos</legend>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>ITEM</th>
+                  <th>Nombre</th>
+                  <th>CEJA disponible</th>
+                  <th>Cantidad</th>
+                  <th>Precio (Bs)</th>
+                  <th>Subtotal (Bs)</th>
+                  <th>Acción</th>
+                </tr>
+              </thead>
+              <tbody id="cotItems" class="items"></tbody>
+            </table>
+          </div>
+          <datalist id="cotDatalist"></datalist>
+          <div class="grid-3 cot-totals">
+            <div><strong>Subtotal:</strong> <span id="cotSubtotal">Bs 0.00</span></div>
+            <div><strong>Descuento:</strong> <span id="cotDescuento">Bs 0.00</span></div>
+            <div><strong>Total:</strong> <span id="cotTotal" class="cot-total">Bs 0.00</span></div>
+          </div>
+          <button type="button" class="secondary" id="cotAddItem">Agregar línea</button>
+        </fieldset>
+        <div class="actions">
+          <button type="submit" id="cotGuardar" class="primary">Guardar cotización</button>
+          <button type="button" id="cotConvertir" class="secondary">Convertir en venta</button>
+          <button type="button" id="cotNueva">Nueva cotización</button>
+        </div>
+      </form>
+
+      <div class="card">
+        <div class="cot-head">
+          <h3>Historial de cotizaciones</h3>
+          <span class="note">Se conservan máximo 3 días</span>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="cotHistTabla">
+            <thead>
+              <tr>
+                <th>Creada</th>
+                <th>N°</th>
+                <th>Cliente</th>
+                <th>Productos</th>
+                <th>Total (Bs)</th>
+                <th>Expira en</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <!-- Historial Ventas -->
     <section id="ventasHistSection" class="page-section" hidden>
       <h2>Historial de Ventas</h2>
@@ -522,6 +605,125 @@
       </div>
     </section>
 
+    <!-- Predicción del dólar: oficial BCB y paralelo P2P -->
+    <section id="predictionSection" class="page-section" hidden>
+      <div class="card fxp-hero">
+        <div>
+          <p class="home-eyebrow">Tipo de cambio</p>
+          <h2>Predicción del Dólar</h2>
+          <p class="note">Dólar oficial del BCB y paralelo P2P (USDT/BOB) con proyección de 7 días, calculada con 6 meses de datos reales y validada contra lo que realmente pasó.</p>
+        </div>
+        <div class="fxp-hero-actions">
+          <button type="button" id="fxpRefreshBtn" class="secondary">Actualizar ahora</button>
+          <span id="fxpUpdated" class="note">--</span>
+        </div>
+      </div>
+
+      <div class="fxp-kpis">
+        <div class="card fxp-kpi fxp-kpi-main">
+          <div class="fxp-kpi-label">Paralelo (USDT/BOB)</div>
+          <div class="fxp-kpi-value" id="fxpBlue">--</div>
+          <div id="fxpBlueChange" class="fxp-delta flat">--</div>
+          <div id="fxpBlueBuySell" class="note">--</div>
+        </div>
+        <div class="card fxp-kpi fxp-kpi-official">
+          <div class="fxp-kpi-label">Oficial BCB</div>
+          <div class="fxp-kpi-value" id="fxpOff">--</div>
+          <div id="fxpOffChange" class="fxp-delta flat">--</div>
+          <div id="fxpOffLabel" class="note">--</div>
+        </div>
+        <div class="card fxp-kpi">
+          <div class="fxp-kpi-label">Brecha paralelo vs oficial</div>
+          <div class="fxp-kpi-value" id="fxpGap">--</div>
+          <div id="fxpGapBs" class="note">--</div>
+        </div>
+        <div class="card fxp-kpi fxp-kpi-forecast">
+          <div class="fxp-kpi-label">Próximo oficial</div>
+          <div class="fxp-kpi-value" id="fxpOffNext">--</div>
+          <div id="fxpOffNextNote" class="note">--</div>
+        </div>
+      </div>
+
+      <div id="fxpSignal" class="card fxp-signal learning">
+        <strong id="fxpSignalTitle">Cargando datos del mercado...</strong>
+        <p id="fxpSignalText" class="note"></p>
+        <p id="fxpSignalOfficial" class="note"></p>
+      </div>
+
+      <div class="card">
+        <div class="fxp-card-head">
+          <h3>Histórico (60 días) y proyección (7 días)</h3>
+          <span class="note">Zonas sombreadas: rango probable (90%)</span>
+        </div>
+        <div class="fxp-chart-wrap"><canvas id="fxpChart"></canvas></div>
+      </div>
+
+      <div class="fxp-grid">
+        <div class="card">
+          <h3>Proyección diaria</h3>
+          <div class="table-wrap">
+            <table class="table fxp-table">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th class="fxp-num">Paralelo</th>
+                  <th class="fxp-num">Rango paralelo</th>
+                  <th class="fxp-num">Prob. de subir</th>
+                  <th class="fxp-num">Oficial</th>
+                  <th class="fxp-num">Rango oficial</th>
+                </tr>
+              </thead>
+              <tbody id="fxpTableBody"></tbody>
+            </table>
+          </div>
+          <p class="note">Prob. de subir: qué tan seguido, en situaciones parecidas de los últimos 60 días, el paralelo terminó por encima del valor actual.</p>
+        </div>
+
+        <div class="fxp-side">
+          <div class="card">
+            <h3>Precisión comprobada</h3>
+            <div id="fxpAccuracy" class="fxp-stats"></div>
+          </div>
+          <div class="card">
+            <h3>Indicadores del mercado</h3>
+            <div id="fxpStats" class="fxp-stats"></div>
+          </div>
+          <div class="card">
+            <h3>Calculadora de compra</h3>
+            <label>Dólares a comprar (USD)
+              <input type="number" id="fxpCalcUsd" min="0" step="100" value="1000" />
+            </label>
+            <div class="fxp-stats">
+              <div class="fxp-stat"><span>Hoy al paralelo</span><strong id="fxpCalcToday">--</strong></div>
+              <div class="fxp-stat"><span>Hoy al oficial</span><strong id="fxpCalcOfficial">--</strong></div>
+              <div class="fxp-stat"><span>En 7 días al paralelo (estimado)</span><strong id="fxpCalcDay7">--</strong></div>
+              <div class="fxp-stat"><span>Rango probable en 7 días</span><strong id="fxpCalcRange">--</strong></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <details class="card fxp-meta">
+        <summary>¿Cómo funciona?</summary>
+        <ul>
+          <li><strong>Oficial:</strong> valor del Banco Central de Bolivia (régimen flexible). Cambia de martes a sábado; domingo y lunes repiten el del sábado. Si el BCB ya publicó el valor del próximo día, se usa ese dato exacto.</li>
+          <li><strong>Paralelo:</strong> precio P2P en vivo (Binance, CriptoYa, Bitget o Dólar Blue Bolivia), actualizado cada 30 segundos mientras la app está abierta.</li>
+          <li><strong>Histórico:</strong> 6 meses de datos horarios descargados de Dólar Blue Bolivia, más las cotizaciones que guarda este navegador como respaldo.</li>
+          <li><strong>Selección del modelo:</strong> cada hora se prueban varios métodos prediciendo los últimos 60 días como si fueran futuro; se usa el que menos se equivocó. Los rangos salen de los errores reales de esa prueba.</li>
+          <li><strong>Aviso:</strong> es una referencia. Noticias o medidas del gobierno pueden mover el precio fuera del rango.</li>
+        </ul>
+        <div class="table-wrap">
+          <table class="table fxp-table">
+            <thead>
+              <tr><th>Serie</th><th>Método</th><th class="fxp-num">Error 1 día</th><th class="fxp-num">Error 3 días</th><th class="fxp-num">Error 7 días</th></tr>
+            </thead>
+            <tbody id="fxpModels"></tbody>
+          </table>
+        </div>
+        <p id="fxpDataStatus" class="note">--</p>
+      </details>
+    </section>
+
     <!-- Administrador: matriz de accesos y roles -->
     <section id="adminSection" class="page-section" hidden>
       <h2>Administrador: Roles y Accesos</h2>
@@ -638,6 +840,9 @@
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.1/dist/jspdf.plugin.autotable.min.js"></script>
   <!-- SheetJS for Excel export -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="modules/prediction.js"></script>
+  <script src="modules/prediction-ui.js"></script>
   <script src="app.js"></script>
+  <script src="modules/cotizaciones.js"></script>
 </body>
 </html>

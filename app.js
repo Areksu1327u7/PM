@@ -9,6 +9,8 @@ let currentSectionId = 'homeSection';
 let inventoryAutoRefreshTimer = null;
 let inventoryEditingItems = new Set();
 let inventoryPendingSync = false;
+let dollarPrediction = null;
+let dollarPredictionUI = null;
 const invLiveTextEl = document.getElementById('invLiveText');
 const invLiveTimeEl = document.getElementById('invLiveTime');
 const invLiveDotEl = document.getElementById('invLiveDot');
@@ -536,6 +538,7 @@ async function refreshFxWidget() {
     let result = await fetchParallelFromBinance();
     if (!result) result = await fetchParallelFromCriptoYa();
     if (!result) result = await fetchParallelFromBitget();
+    const isLiveParallel = !!result;
 
     // If all P2P sources fail, try cache first (it has a recent parallel rate)
     if (!result) {
@@ -559,6 +562,7 @@ async function refreshFxWidget() {
     fxSetStatus(source);
     // Only cache if it's a real parallel rate (> 7 BOB/USD)
     if (buyPrice > 7) fxSaveCache(buyPrice, sellPrice, source);
+    if (isLiveParallel) dollarPrediction?.recordSample(buyPrice, sellPrice, source);
 
     const midPrice = (buyPrice + sellPrice) / 2;
     fxParallelBuyEl.textContent = fxFmt(buyPrice, 4);
@@ -574,6 +578,24 @@ async function refreshFxWidget() {
 }
 
 fxRefreshBtn?.addEventListener('click', refreshFxWidget);
+
+function initDollarPrediction() {
+  if (typeof DollarPredictionModule === 'undefined' || typeof DollarPredictionUI === 'undefined') return;
+  dollarPrediction = new DollarPredictionModule();
+  dollarPredictionUI = new DollarPredictionUI(dollarPrediction);
+  dollarPredictionUI.render();
+  dollarPrediction.refreshAll();
+  setInterval(() => dollarPrediction.refreshAll(), 5 * 60 * 1000);
+  const btn = document.getElementById('fxpRefreshBtn');
+  btn?.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      await Promise.all([refreshFxWidget(), dollarPrediction.refreshAll(true)]);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
 
 function updateHomeClock() {
   const now = new Date();
@@ -771,6 +793,12 @@ function showSection(id) {
   }
   if (id === 'inventarioSection') {
     refreshInventoryLiveView();
+  }
+  if (id === 'predictionSection') {
+    dollarPredictionUI?.onShow();
+  }
+  if (id === 'cotizacionSection') {
+    window.cotizaciones?.onShow();
   }
 }
 // Ventas subview toggles and auto-number
@@ -1355,6 +1383,7 @@ formVenta.addEventListener('submit', async (e) => {
       venGuardarBtn.setAttribute('data-hint', 'Guardado. Usa «Limpiar» para habilitar.');
       venGuardarBtn.title = 'Guardado. Usa «Limpiar» para habilitar.';
     }
+    window.dispatchEvent(new CustomEvent('venta:guardada', { detail: { numero: num } }));
     alert('Venta guardada. Inventario actualizado.');
     await refreshInventoryUI();
     await refreshDashboard();
@@ -3230,6 +3259,7 @@ movLimpiar?.addEventListener('click', () => { formMov.reset(); if (movItemsTbody
 
 // Inicialización
 (async () => {
+  initDollarPrediction();
   initProductsRealtime();
   initInventoryAutoRefresh();
   await refreshInventoryUI();
