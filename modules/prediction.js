@@ -265,7 +265,7 @@
   class DollarPredictionModule extends EventTarget {
     constructor() {
       super();
-      LEGACY_KEYS.forEach(k => { try { localStorage.removeItem(k); } catch {} });
+      // Las cachés anteriores se conservan; abrir la aplicación no borra datos locales.
       this.market = readJson(STORE.market, null);
       this.official = readJson(STORE.official, null);
       const samples = readJson(STORE.samples, []);

@@ -1,5 +1,5 @@
 /**
- * Cotizaciones: se guardan en este navegador (localStorage) y se eliminan a los 3 días de creadas.
+ * Cotizaciones locales: vencen a los 3 días y se conservan para consulta.
  * Usa utilidades globales de app.js (allProducts, newVentaRow, showSection, etc.).
  */
 (function () {
@@ -21,36 +21,37 @@
 
   let productsByKey = new Map();
   let editingId = null;
+  let editingVersion = 0, saving = null;
   let pendingVentaCotId = null;
   let dirty = false;
 
   // ===== Almacenamiento =====
-  function load() {
-    try {
-      const list = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-      return Array.isArray(list) ? list : [];
-    } catch {
-      return [];
-    }
+  let cache=[],versions=new Map();
+  function load(){ return Access.can('quotes.manage') ? structuredClone(cache) : []; }
+  async function refreshQuotes(){
+    Access.require('quotes.manage');
+    const rows=await Store.all('store_quotes');
+    cache=rows.map(r=>r.data);versions=new Map(rows.map(r=>[r.id,r.version]));
   }
-
-  function persist(list) {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+  async function persist(list,expectedVersions=new Map()){
+    try{
+      Access.require('quotes.manage');
+      for(const cot of list){
+        const original=cache.find(c=>c.id===cot.id);
+        if(JSON.stringify(original)===JSON.stringify(cot))continue;
+        const version=await Access.rpc('store_quote_save',{p_id:cot.id,p_data:cot,p_version:expectedVersions.has(cot.id)?expectedVersions.get(cot.id):versions.get(cot.id)||0});
+        versions.set(cot.id,version);
+        cache=cache.filter(c=>c.id!==cot.id).concat(structuredClone(cot));
+      }
       return true;
-    } catch (e) {
-      console.error('cotizaciones persist', e);
-      alert('No se pudo guardar la cotización en este navegador.');
-      return false;
-    }
+    }catch(e){Store.notice(e.message,true);return false;}
   }
 
-  // Devuelve las cotizaciones vigentes y borra las que superaron los 3 días.
+  // Leer nunca elimina cotizaciones, aunque hayan vencido.
   function getAll() {
     const now = Date.now();
     const list = load();
-    const alive = list.filter(c => now - Number(c.createdAt) < TTL_MS);
-    if (alive.length !== list.length) persist(alive);
+    const alive = list;
     if (editingId && !alive.some(c => c.id === editingId)) editingId = null;
     return alive.sort((a, b) => b.createdAt - a.createdAt);
   }
@@ -63,7 +64,7 @@
   function genNumero() {
     const d = new Date();
     const p = (n) => String(n).padStart(2, '0');
-    return `C-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    return `C-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${genId().slice(0,8)}`;
   }
 
   function genId() {
@@ -71,8 +72,7 @@
   }
 
   function todayISO() {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return Store.date();
   }
 
   function formatRemaining(ms) {
@@ -86,16 +86,18 @@
     return `${m}m`;
   }
 
+  function cotExpiry(c) { return c.expiresAt || Number(c.createdAt) + TTL_MS; }
+
   function computeTotals(items, descuentoPct) {
-    const subtotal = items.reduce((acc, it) => acc + it.cantidad * it.precio, 0);
+    const subtotal = Store.money(items.reduce((acc, it) => acc + Store.money(it.cantidad * it.precio), 0));
     const pct = Math.min(100, Math.max(0, Number(descuentoPct) || 0));
-    const descuento = (subtotal * pct) / 100;
-    return { subtotal, descuento, total: subtotal - descuento };
+    const descuento = Store.money((subtotal * pct) / 100);
+    return { subtotal, descuento, total: Store.money(subtotal - descuento) };
   }
 
   // ===== Productos =====
   async function refreshProducts() {
-    const products = await allProducts();
+    const products = await Store.catalog();
     productsByKey = new Map(products.map(p => [normalizeItemKey(p.item), p]));
     datalist.innerHTML = products
       .map(p => `<option value="${escapeHtml(p.item)}">${escapeHtml(p.nombre)}</option>`)
@@ -141,8 +143,8 @@
         product: p,
         item: p ? p.item : raw,
         nombre: p ? p.nombre : '',
-        cantidad: parseInt(tr.querySelector('.cot-cant').value || '0', 10) || 0,
-        precio: parseFloat(tr.querySelector('.cot-precio').value || '0') || 0
+        cantidad: Number(tr.querySelector('.cot-cant').value || '0'),
+        precio: Number(tr.querySelector('.cot-precio').value || '0')
       };
     });
   }
@@ -174,6 +176,7 @@
 
   function resetForm() {
     editingId = null;
+    editingVersion = 0;
     clienteInput.value = '';
     descInput.value = '';
     numInput.value = genNumero();
@@ -187,6 +190,7 @@
 
   function loadIntoForm(cot) {
     editingId = cot.id;
+    editingVersion = versions.get(cot.id)||0;
     numInput.value = cot.numero;
     clienteInput.value = cot.cliente || '';
     descInput.value = cot.descuentoPct || '';
@@ -201,17 +205,27 @@
   }
 
   function save() {
-    const rows = readRows().filter(r => r.item && r.cantidad > 0);
+    if(!saving) saving=saveDraft().finally(()=>{saving=null;});
+    return saving;
+  }
+  async function saveDraft() {
+    Access.require('quotes.manage');
+    const rows = readRows();
     if (!rows.length) {
       alert('Agrega al menos un producto con cantidad mayor a 0.');
       return null;
     }
+    if(rows.some(r=>!r.item || !Number.isSafeInteger(r.cantidad) || r.cantidad<=0 || !Number.isFinite(r.precio) || r.precio<0)){
+      alert('Complete todas las líneas: producto, cantidad entera mayor a cero y precio válido.');return null;
+    }
+    const rawDiscount=Number(descInput.value||0);
+    if(!Number.isFinite(rawDiscount)||rawDiscount<0||rawDiscount>100){alert('El descuento debe estar entre 0 y 100%.');return null;}
     const desconocidos = rows.filter(r => !r.product).map(r => r.item);
     if (desconocidos.length) {
       alert(`Estos productos no existen en el inventario:\n${desconocidos.join('\n')}`);
       return null;
     }
-    const items = rows.map(({ item, nombre, cantidad, precio }) => ({ item, nombre, cantidad, precio }));
+    const items = rows.map(({ item, nombre, cantidad, precio }) => ({ item, nombre, cantidad, precio:Store.money(precio) }));
     const descuentoPct = Math.min(100, Math.max(0, parseFloat(descInput.value || '0') || 0));
     const data = { cliente: clienteInput.value.trim(), descuentoPct, items, ...computeTotals(items, descuentoPct) };
 
@@ -219,13 +233,14 @@
     const now = Date.now();
     let cot = editingId ? list.find(c => c.id === editingId) : null;
     if (cot) {
-      Object.assign(cot, data, { updatedAt: now });
+      Object.assign(cot, data, { updatedAt: now, expiresAt: now + TTL_MS });
     } else {
       cot = { id: genId(), numero: numInput.value || genNumero(), createdAt: now, updatedAt: now, ...data };
       list.push(cot);
     }
-    if (!persist(list)) return null;
+    if (!await persist(list,new Map([[cot.id,editingId?editingVersion:0]]))) return null;
     editingId = cot.id;
+    editingVersion = versions.get(cot.id)||0;
     dirty = false;
     updateModo();
     renderHistory();
@@ -233,7 +248,29 @@
   }
 
   // ===== Convertir en venta =====
+  function printQuote(cot, autoPrint) {
+    const fecha = new Intl.DateTimeFormat('en-CA',{timeZone:'America/La_Paz',year:'numeric',month:'2-digit',day:'2-digit'});
+    return descargarComprobantePDF('cotizacion',{
+      autoPrint,
+      payload:{
+        comprobante:{numero:cot.numero,fecha:fecha.format(new Date(cot.updatedAt || cot.createdAt)),entidad:cot.cliente || 'Cliente no especificado'},
+        items:cot.items.map(i=>({...i,precioVenta:i.precio})),
+        subtotal:cot.subtotal,descuento:cot.descuento,total:cot.total,
+        validaHasta:fecha.format(new Date(cotExpiry(cot))) + (Date.now()>=cotExpiry(cot) ? ' (VENCIDA)' : '')
+      }
+    });
+  }
+
+  for(const [id,autoPrint] of [['cotImprimir',true],['cotPDF',false]]){
+    document.getElementById(id)?.addEventListener('click',async()=>{
+      const cot=editingId&&!dirty ? findById(editingId) : await save();
+      if(cot) printQuote(cot,autoPrint);
+    });
+  }
+
   async function convertToVenta(cot) {
+    Access.require('sales.create');
+    if (Date.now() >= (cot.expiresAt || Number(cot.createdAt) + TTL_MS)) { alert('La cotización venció. Cárguela, revise sus precios y guárdela para renovar su vigencia.'); return; }
     if (cot.convertedAt && !confirm(`Esta cotización ya se convirtió en la venta ${cot.ventaNumero}. ¿Convertir de nuevo?`)) return;
     const ventaEnCurso = !venGuardarBtn?.disabled &&
       Array.from(venItemsDiv.querySelectorAll('.ven-sku')).some(i => i.value.trim());
@@ -280,7 +317,7 @@
   function renderHistory() {
     const list = getAll();
     if (!list.length) {
-      histBody.innerHTML = '<tr><td colspan="8" class="note">No hay cotizaciones en los últimos 3 días.</td></tr>';
+      histBody.innerHTML = '<tr><td colspan="8" class="note">No hay cotizaciones guardadas.</td></tr>';
       return;
     }
     const now = Date.now();
@@ -297,12 +334,14 @@
           <td>${escapeHtml(c.cliente || '—')}</td>
           <td>${c.items.length} (${unidades} u.)</td>
           <td><strong>${Number(c.total).toFixed(2)}</strong></td>
-          <td>${formatRemaining(Number(c.createdAt) + TTL_MS - now)}</td>
+          <td>${formatRemaining((cotExpiry(c)) - now)}</td>
           <td>${estado}</td>
           <td class="cot-actions">
             <button type="button" class="secondary" data-action="load" data-id="${id}">Cargar</button>
+            <button type="button" class="secondary" data-action="print" data-id="${id}">Imprimir cotización</button>
+            <button type="button" class="secondary" data-action="pdf" data-id="${id}">PDF</button>
             <button type="button" class="primary" data-action="convert" data-id="${id}">Convertir en venta</button>
-            <button type="button" class="btn-danger" data-action="delete" data-id="${id}">Eliminar</button>
+
           </td>
         </tr>`;
     }).join('');
@@ -331,14 +370,14 @@
     newRow().querySelector('.cot-item').focus();
   });
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const cot = save();
-    if (cot) alert(`Cotización ${cot.numero} guardada. Se eliminará automáticamente en 3 días.`);
+    const cot = await save();
+    if (cot) alert(`Cotización ${cot.numero} guardada. Vigente durante 3 días; se conservará en el historial.`);
   });
 
   document.getElementById('cotConvertir').addEventListener('click', async () => {
-    const cot = save();
+    const cot = await save();
     if (cot) await convertToVenta(cot);
   });
 
@@ -356,20 +395,22 @@
       renderHistory();
       return;
     }
-    if (btn.dataset.action === 'load') {
+    if (btn.dataset.action === 'print' || btn.dataset.action === 'pdf') {
+      await printQuote(cot,btn.dataset.action==='print');
+    } else if (btn.dataset.action === 'load') {
       if (dirty && !confirm('Hay cambios sin guardar en la cotización actual. ¿Descartarlos?')) return;
       loadIntoForm(cot);
     } else if (btn.dataset.action === 'convert') {
       await convertToVenta(cot);
     } else if (btn.dataset.action === 'delete') {
       if (!confirm(`¿Eliminar la cotización ${cot.numero}?`)) return;
-      persist(getAll().filter(c => c.id !== cot.id));
+      return; // Las cotizaciones se conservan en el historial.
       if (editingId === cot.id) resetForm();
       else renderHistory();
     }
   });
 
-  window.addEventListener('venta:guardada', (e) => {
+  window.addEventListener('venta:guardada', async (e) => {
     if (!pendingVentaCotId) return;
     const list = getAll();
     const cot = list.find(c => c.id === pendingVentaCotId);
@@ -377,7 +418,7 @@
     if (!cot) return;
     cot.convertedAt = Date.now();
     cot.ventaNumero = e.detail?.numero || '';
-    persist(list);
+    await persist(list);
     updateModo();
     renderHistory();
   });
@@ -394,13 +435,12 @@
   }, 60 * 1000);
 
   resetForm();
-  refreshProducts();
+  // Los datos se solicitan al abrir Cotización.
 
   window.cotizaciones = {
-    onShow() {
-      renderHistory();
-      updateModo();
-      refreshProducts();
+    async onShow() {
+      if(!Access.can('quotes.manage')) return;
+      try { await Promise.all([refreshQuotes(),refreshProducts()]);renderHistory();updateModo(); } catch(e){Store.notice(e.message,true);}
     }
   };
 })();
