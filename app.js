@@ -1,8 +1,4 @@
-// Conexión Supabase
-const SUPABASE_URL = 'https://qmaftwvpbzzzdmuevelh.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtYWZ0d3ZwYnp6emRtdWV2ZWxoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5NjA2NTYsImV4cCI6MjA4MDUzNjY1Nn0.dEQkkAWdwAEGDhqSPcQuuBKSwMlmVQk9J2ws6eU7ti4';
-supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
+// Cliente autenticado creado por modules/access.js.
 let liveRefreshTimer = null;
 let productsRealtimeChannel = null;
 let currentSectionId = 'homeSection';
@@ -92,58 +88,26 @@ function updateChangeCounter() {
 }
 
 async function saveAllInventoryEdits() {
-  const table = document.getElementById('invTabla');
-  if (!table) return;
-  const rows = table.querySelectorAll('tbody tr.inv-row-changed');
-  if (!rows.length) { alert('No hay cambios para guardar.'); return; }
-
-  const editedItems = new Set();
-  for (const tr of rows) {
-    const originalItem = tr.dataset.item;
-    const orig = inventoryOriginalData.get(originalItem);
-    if (!orig) continue;
-    const editedItem = tr.querySelector('.edit-item')?.value.trim() || '';
-    if (!editedItem) {
-      alert(`El ITEM no puede estar vacío (${originalItem}).`);
-      return;
-    }
-    const key = editedItem.toLowerCase();
-    if (editedItems.has(key)) {
-      alert(`Hay ITEMs duplicados en la edición: ${editedItem}`);
-      return;
-    }
-    editedItems.add(key);
-  }
-
-  table.classList.add('fading');
-  const promises = [];
-  for (const tr of rows) {
-    const item = tr.dataset.item;
-    const orig = inventoryOriginalData.get(item);
-    if (!orig) continue;
-    const updated = {
-      id: orig.id,
-      item: tr.querySelector('.edit-item')?.value.trim() || orig.item,
-      nombre: tr.querySelector('.edit-nombre')?.value.trim() || orig.nombre,
-      categoria: tr.querySelector('.edit-cat')?.value.trim() || 'General',
-      ceja: parseInt(tr.querySelector('.edit-ceja')?.value || '0', 10),
-      senkata: parseInt(tr.querySelector('.edit-senkata')?.value || '0', 10),
-      unidad: tr.querySelector('.edit-unidad')?.value.trim() || 'PCS',
-      precio: parseFloat(tr.querySelector('.edit-precio')?.value || '0')
-    };
-    promises.push(upsertProduct(updated));
-  }
-  await Promise.all(promises);
-  table.classList.remove('fading');
-
-  // Exit edit mode
-  inventoryEditMode = false;
-  inventoryEditingItems.clear();
-  inventoryOriginalData.clear();
-  updateEditModeUI();
-  await refreshInventoryUI();
-  setInventoryLiveStatus('Actualización en vivo activa', 'ok');
-  markInventoryLiveSyncTime();
+  return Store.run('inventory', document.getElementById('invSaveAllBtn'), async () => {
+    const rows = [...invTabla.querySelectorAll('tr.inv-row-changed')];
+    if (!rows.length) return;
+    const products = rows.map(tr => {
+      const orig = inventoryOriginalData.get(tr.dataset.item);
+      const changes = {};
+      const fields = {item:'item',nombre:'nombre',cat:'categoria',ceja:'ceja',senkata:'senkata',unidad:'unidad',precio:'precio'};
+      for (const [css, field] of Object.entries(fields)) {
+        const input = tr.querySelector('.edit-'+css);
+        if (!input.classList.contains('inv-field-changed')) continue;
+        changes[field] = ['ceja','senkata','precio'].includes(field) ? Store.number(input.value,field,{integer:field!=='precio'}) : input.value.trim();
+        if (changes[field] === '') throw new Error(field+' no puede estar vacío.');
+      }
+      return { id:orig.id, expected:orig, changes };
+    });
+    await Store.commit('products_save',{products},'inventory');
+    inventoryEditMode=false; inventoryEditingItems.clear(); inventoryOriginalData.clear(); updateEditModeUI();
+    Store.notice('Todos los cambios se guardaron correctamente.');
+    refreshAfterWrite();
+  });
 }
 
 function discardAllInventoryEdits() {
@@ -168,7 +132,16 @@ async function toggleInventoryEditMode() {
     inventoryEditMode = true;
     setInventoryLiveStatus('Modo Edición activo — sync pausada', 'syncing');
     // Store original data and render editable table
-    const list = await allProducts();
+    let list;
+    try { list = await allProducts(); }
+    catch (e) {
+      // Sin datos vigentes no se permite editar: se vuelve al modo consulta.
+      inventoryEditMode = false; inventoryEditingItems.clear(); updateEditModeUI();
+      setInventoryLiveStatus('Sincronización con retraso', 'error');
+      Store.notice('No se pudo cargar el inventario para editar. ' + e.message, true);
+      return;
+    }
+    if (!inventoryEditMode) return;
     inventoryOriginalData.clear();
     list.forEach(p => inventoryOriginalData.set(p.item, { ...p }));
     inventoryEditingItems.add('__edit_mode__');
@@ -215,8 +188,9 @@ function onEditableInputChange(e) {
 }
 
 async function refreshInventoryLiveView() {
+  if(!Access.can('inventory.read')) return;
   if (currentSectionId !== 'inventarioSection') return;
-  if (inventoryEditingItems.size > 0) {
+  if (inventoryEditMode || inventoryEditingItems.size > 0) {
     inventoryPendingSync = true;
     setInventoryLiveStatus(`Edición en curso (${inventoryEditingItems.size} fila(s)) — sync pausada`, 'syncing');
     return;
@@ -242,24 +216,34 @@ function initInventoryAutoRefresh() {
   if (inventoryAutoRefreshTimer) return;
   inventoryAutoRefreshTimer = setInterval(async () => {
     try {
-      await refreshInventoryLiveView();
+      if(document.hidden||currentSectionId!=='inventarioSection'||Store.busy.size||visibleRefreshRunning.has(currentSectionId))return;
+      await refreshVisibleViews();
     } catch (e) {
       console.warn('inventory auto-refresh warn', e);
     }
-  }, 5000);
+  }, 15000);
 }
 
-function scheduleLiveRefresh() {
-  if (liveRefreshTimer) clearTimeout(liveRefreshTimer);
-  liveRefreshTimer = setTimeout(async () => {
-    try {
-      await refreshInventoryLiveView();
-      await refreshMovDatalist();
-      await refreshDashboard();
-    } catch (e) {
-      console.warn('live refresh warn', e);
-    }
-  }, 250);
+const visibleRefreshRunning=new Map();
+async function refreshVisibleViews(){
+  if(document.hidden)return;
+  const section=currentSectionId;
+  const previous=visibleRefreshRunning.get(section);
+  if(previous){previous.again=true;return previous.promise;}
+  const tasks=section==='inventarioSection'?[refreshInventoryLiveView]:section==='dashboardSection'?[refreshDashboard]:section==='ventasHistSection'?[refreshVentasHistorial]:section==='movSection'?(document.getElementById('movHistView')?.hidden===false?[refreshMovimientosTable]:[refreshMovDatalist,refreshRecentMovimientos]):section==='realizarVentaSection'?[refreshMovDatalist]:section==='adminSection'?[renderAdminMatrix,...(Access.can('inventory.write')?[populateBulkCategories]:[])]:[];
+  const target=document.getElementById(section);target?.setAttribute('aria-busy','true');
+  const state={again:false,promise:Store.refresh(tasks)};
+  visibleRefreshRunning.set(section,state);
+  try{await state.promise;}finally{target?.removeAttribute('aria-busy');visibleRefreshRunning.delete(section);if(state.again&&currentSectionId===section)scheduleLiveRefresh();}
+}
+function refreshAfterWrite(){
+  Store.invalidateReads();
+  // La confirmación ya se recibió; las vistas no bloquean la siguiente operación.
+  scheduleLiveRefresh();
+}
+function scheduleLiveRefresh(){
+  if(liveRefreshTimer)clearTimeout(liveRefreshTimer);
+  liveRefreshTimer=setTimeout(()=>{liveRefreshTimer=null;void refreshVisibleViews();},150);
 }
 
 function initProductsRealtime() {
@@ -267,6 +251,7 @@ function initProductsRealtime() {
   productsRealtimeChannel = supabase
     .channel('realtime-products')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+      Store.invalidateReads();
       if (currentSectionId === 'inventarioSection') setInventoryLiveStatus('Cambio detectado. Actualizando...', 'syncing');
       scheduleLiveRefresh();
     })
@@ -281,28 +266,8 @@ function initProductsRealtime() {
 // roles_matrix: { id, data_json declarado para forzar una modificacion externa }
 
 // Datos iniciales de ejemplo
-async function seedIfEmpty() {
-  const { data: products, error } = await supabase.from('products').select('id');
-  if (error) { console.error('Error consultando productos', error); return; }
-  if (!products || products.length === 0) {
-    const seed = [
-      { item: 'SKU-001', nombre: 'Teclado', categoria: 'Periféricos', ceja: 10, senkata: 15, unidad: 'PCS', precio: 29.9 },
-      { item: 'SKU-002', nombre: 'Mouse', categoria: 'Periféricos', ceja: 20, senkata: 20, unidad: 'PCS', precio: 12.5 },
-      { item: 'SKU-003', nombre: 'Monitor 24"', categoria: 'Monitores', ceja: 5, senkata: 5, unidad: 'PCS', precio: 140.0 },
-      { item: 'SKU-004', nombre: 'Laptop 14"', categoria: 'Computadoras', ceja: 2, senkata: 3, unidad: 'PCS', precio: 590.0 }
-    ];
-    await supabase.from('products').insert(seed);
-  }
-  const { data: rolesRow } = await supabase.from('roles_matrix').select('id').limit(1).maybeSingle();
-  if (!rolesRow) {
-    const modules = ['Home', 'Ingreso', 'Movimientos', 'Ventas', 'Inventario', 'Dashboard', 'Administrador'];
-    const rolesList = ['Admin', 'Vendedor', 'Almacenero'];
-    const matrix = {};
-    rolesList.forEach(r => { matrix[r] = {}; modules.forEach(m => matrix[r][m] = true); });
-    await supabase.from('roles_matrix').insert({ data_json: { roles: rolesList, modules, matrix } });
-  }
-}
-seedIfEmpty();
+
+// No se crean datos de ejemplo al iniciar.
 
 // Widget de tipo de cambio (USDT / BOB)
 const fxParallelBuyEl = document.getElementById('fxParallelBuy');
@@ -783,7 +748,10 @@ navButtons.forEach(btn => btn.addEventListener('click', () => showSection(btn.da
 const homeShortcutButtons = document.querySelectorAll('.home-shortcut-btn[data-go-section]');
 homeShortcutButtons.forEach(btn => btn.addEventListener('click', () => showSection(btn.dataset.goSection)));
 function showSection(id) {
+  if(!Access.can(Access.sections[id])) { Store.notice("Su rol no tiene acceso a este apartado.",true); return; }
   currentSectionId = id;
+  window.Experience?.onSection(id);
+  document.querySelectorAll('.nav-btn').forEach(btn=>{btn.classList.toggle('active',btn.dataset.target===id);if(btn.dataset.target===id)btn.setAttribute('aria-current','page');else btn.removeAttribute('aria-current');});
   document.querySelectorAll('.page-section').forEach(s => s.hidden = s.id !== id);
   if (id === 'realizarVentaSection') {
     const saleNumInput = document.getElementById('venNum');
@@ -791,10 +759,10 @@ function showSection(id) {
       setAutoSaleNumber();
     }
   }
-  if (id === 'inventarioSection') {
-    refreshInventoryLiveView();
-  }
+  void refreshVisibleViews();
+  if (id === 'dashboardSection') window.Dashboard?.onShow();
   if (id === 'predictionSection') {
+    if(!dollarPredictionUI)initDollarPrediction();
     dollarPredictionUI?.onShow();
   }
   if (id === 'cotizacionSection') {
@@ -810,7 +778,7 @@ function genSaleNumber() {
   const hh = String(d.getHours()).padStart(2,'0');
   const mm = String(d.getMinutes()).padStart(2,'0');
   const ss = String(d.getSeconds()).padStart(2,'0');
-  return `V-${y}${m}${day}-${hh}${mm}${ss}`;
+  return `V-${y}${m}${day}-${hh}${mm}${ss}-${crypto.randomUUID().slice(0,8)}`;
 }
 function setAutoSaleNumber() {
   const inp = document.getElementById('venNum');
@@ -866,6 +834,7 @@ const adminTabla = document.getElementById('adminTabla');
 // Admin configs & tools
 const cfgBrandName = document.getElementById('cfgBrandName');
 const cfgCoverageDays = document.getElementById('cfgCoverageDays');
+const cfgNavigation = document.getElementById('cfgNavigation');
 const cfgGuardar = document.getElementById('cfgGuardar');
 const exportProductosBtn = document.getElementById('exportProductos');
 const exportMovimientosBtn = document.getElementById('exportMovimientos');
@@ -880,10 +849,11 @@ const SETTINGS_KEY = 'appSettings';
 function getSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    const s = raw ? JSON.parse(raw) : {};
+    const s = {...(raw ? JSON.parse(raw) : {}),...Access.settings};
     return {
       brandName: s.brandName || 'IMPORTACIONES MB',
-      coverageDays: Number(s.coverageDays || 14)
+      coverageDays: Number(s.coverageDays || 14),
+      navigation: s.navigation === 'horizontal' ? 'horizontal' : 'lateral'
     };
   } catch { return { brandName: 'IMPORTACIONES MB', coverageDays: 14 }; }
 }
@@ -896,50 +866,47 @@ function initAdminSettingsUI() {
   const s = getSettings();
   if (cfgBrandName) cfgBrandName.value = s.brandName || '';
   if (cfgCoverageDays) cfgCoverageDays.value = String(s.coverageDays || 14);
+  if (cfgNavigation) cfgNavigation.value = s.navigation || 'lateral';
+  document.documentElement.dataset.navigation = s.navigation || 'lateral';
 }
-cfgGuardar?.addEventListener('click', () => {
+cfgGuardar?.addEventListener('click', () => Store.run('settings',cfgGuardar,async () => {
   const brand = (cfgBrandName?.value || '').trim() || 'IMPORTACIONES MB';
   let cov = parseInt(cfgCoverageDays?.value || '14', 10);
   if (!Number.isFinite(cov) || cov <= 0) cov = 14;
-  saveSettings({ brandName: brand, coverageDays: cov });
+  if(Access.can('settings.manage')) await Access.saveSettings({brandName:brand,coverageDays:cov});
+  saveSettings({ navigation: cfgNavigation?.value === 'horizontal' ? 'horizontal' : 'lateral' });
+  initAdminSettingsUI();
+  window.Dashboard?.onShow();
   alert('Configuraciones guardadas.');
   refreshDashboard();
-});
+}));
 
 async function populateBulkCategories() {
   try {
     const list = await allProducts();
     const cats = Array.from(new Set(list.map(p => (p.categoria || 'General')))).sort();
     if (bulkCatSelect) {
-      bulkCatSelect.innerHTML = '<option value="">Seleccione</option>' + cats.map(c => `<option value="${c}">${c}</option>`).join('');
+      bulkCatSelect.innerHTML = '<option value="">Seleccione</option>' + cats.map(c => `<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('');
     }
   } catch (e) { console.warn('bulk cats warn', e); }
 }
-bulkApplyBtn?.addEventListener('click', async () => {
-  const cat = bulkCatSelect?.value || '';
-  const pct = parseFloat(bulkPercentInput?.value || '0');
-  if (!cat) { alert('Seleccione una categoría'); return; }
-  if (!Number.isFinite(pct)) { alert('Ingrese un porcentaje válido'); return; }
-  const sign = pct >= 0 ? '+' : '';
-  if (!confirm(`Aplicar ${sign}${pct}% a precios de la categoría "${cat}"?`)) return;
-  try {
-    const list = await allProducts();
-    const targets = list.filter(p => (p.categoria || 'General') === cat);
-    let updated = 0;
-    for (const p of targets) {
-      const newPrice = Math.max(0, Number((p.precio || 0) * (1 + pct/100)).toFixed(2));
-      const { error } = await supabase.from('products').update({ precio: newPrice }).eq('id', p.id);
-      if (!error) updated++;
-    }
-    await refreshInventoryUI();
-    alert(`Ajuste completado. Productos actualizados: ${updated}.`);
-  } catch (err) { console.error('bulk price error', err); alert('No se pudo aplicar el ajuste.'); }
-});
+bulkApplyBtn?.addEventListener('click',()=>Store.run('prices',bulkApplyBtn,async()=>{
+  const cat=bulkCatSelect.value,pct=Store.number(bulkPercentInput.value,'Porcentaje',{min:-100});
+  if(!cat) throw new Error('Seleccione una categoría.');
+  const list=(await allProducts()).filter(p=>(p.categoria||'General')===cat);
+  if(!list.length) throw new Error('La categoría no tiene productos.');
+  if(!confirm('Se cambiarán los precios de '+list.length+' productos en '+pct+'%. ¿Continuar?')) return;
+  await Store.commit('products_save',{products:list.map(p=>({id:p.id,expected:p,changes:{precio:Store.money(p.precio*(1+pct/100))}}))},'prices');
+  Store.notice('Todos los precios se actualizaron.');
+  refreshAfterWrite();
+}));
+
 
 // Admin Exports
 exportProductosBtn?.addEventListener('click', async () => {
+  if(!Access.can('exports.read')) return Store.notice('No tiene permiso para exportar.',true);
   try {
-    if (!window.XLSX) { alert('Exportador Excel no disponible.'); return; }
+    if (!(await loadVendor('xlsx'))) { alert('Exportador Excel no disponible. Revise la conexión.'); return; }
     const list = await allProducts();
     if (!list || !list.length) { alert('No hay productos para exportar.'); return; }
     const data = list.map(p => ({
@@ -954,12 +921,13 @@ exportProductosBtn?.addEventListener('click', async () => {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Productos');
-    XLSX.writeFile(wb, `Productos_${new Date().toISOString().slice(0,10)}.xlsx`);
+    XLSX.writeFile(wb, `Productos_${Store.date()}.xlsx`);
   } catch (e) { console.error('export productos', e); alert('No se pudo exportar productos.'); }
 });
 exportMovimientosBtn?.addEventListener('click', async () => {
+  if(!Access.can('exports.read')) return Store.notice('No tiene permiso para exportar.',true);
   try {
-    if (!window.XLSX) { alert('Exportador Excel no disponible.'); return; }
+    if (!(await loadVendor('xlsx'))) { alert('Exportador Excel no disponible. Revise la conexión.'); return; }
     const list = await allMovements();
     if (!list || !list.length) { alert('No hay movimientos para exportar.'); return; }
     const data = list.map(m => ({
@@ -975,13 +943,15 @@ exportMovimientosBtn?.addEventListener('click', async () => {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Movimientos');
-    XLSX.writeFile(wb, `Movimientos_${new Date().toISOString().slice(0,10)}.xlsx`);
+    XLSX.writeFile(wb, `Movimientos_${Store.date()}.xlsx`);
   } catch (e) { console.error('export movs', e); alert('No se pudo exportar movimientos.'); }
 });
 exportVentasBtn?.addEventListener('click', async () => {
+  if(!Access.can('exports.read')) return Store.notice('No tiene permiso para exportar.',true);
   try {
-    if (!window.XLSX) { alert('Exportador Excel no disponible.'); return; }
-    const { data } = await supabase.from('sales').select('*').order('fecha',{ascending:false});
+    if (!(await loadVendor('xlsx'))) { alert('Exportador Excel no disponible. Revise la conexión.'); return; }
+    const data = await Store.all('sales');
+    const activeIds=new Set((await activeSales(null,data)).map(s=>s.id));
     const list = data || [];
     if (!list.length) { alert('No hay ventas para exportar.'); return; }
     const sheetData = list.map(s => ({
@@ -992,18 +962,21 @@ exportVentasBtn?.addEventListener('click', async () => {
       'Descuento (%)': Number(s.descuento_pct || 0),
       'Descuento (Bs)': Number(s.descuento || 0),
       'Total (Bs)': Number(s.total || 0),
-      'Estado': s.estado || 'vigente'
+      'Estado': activeIds.has(s.id) ? 'vigente' : 'anulada',
+      'Total vigente (Bs)': activeIds.has(s.id) ? Number(s.total || 0) : 0
     }));
     const ws = XLSX.utils.json_to_sheet(sheetData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Ventas');
-    XLSX.writeFile(wb, `Ventas_${new Date().toISOString().slice(0,10)}.xlsx`);
+    XLSX.writeFile(wb, `Ventas_${Store.date()}.xlsx`);
   } catch (e) { console.error('export ventas', e); alert('No se pudo exportar ventas.'); }
 });
 exportVentasItemsBtn?.addEventListener('click', async () => {
+  if(!Access.can('exports.read')) return Store.notice('No tiene permiso para exportar.',true);
   try {
-    if (!window.XLSX) { alert('Exportador Excel no disponible.'); return; }
-    const { data } = await supabase.from('sales_items').select('*').order('id',{ascending:true});
+    if (!(await loadVendor('xlsx'))) { alert('Exportador Excel no disponible. Revise la conexión.'); return; }
+    const [data,active] = await Promise.all([Store.all('sales_items'),activeSales()]);
+    const activeIds=new Set(active.map(s=>s.id));
     const list = data || [];
     if (!list.length) { alert('No hay items de ventas para exportar.'); return; }
     const sheetData = list.map(r => ({
@@ -1012,112 +985,42 @@ exportVentasItemsBtn?.addEventListener('click', async () => {
       'Nombre': r.nombre,
       'Cantidad': r.cantidad || 0,
       'Precio (Bs)': Number(r.precio || 0),
-      'Subtotal (Bs)': Number(r.subtotal || 0)
+      'Subtotal (Bs)': Number(r.subtotal || 0),
+      'Estado': !activeIds.has(r.sale_id) ? 'Venta anulada' : r.cantidad === 0 ? 'Línea retirada' : 'Vigente'
     }));
     const ws = XLSX.utils.json_to_sheet(sheetData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'VentasItems');
-    XLSX.writeFile(wb, `VentasItems_${new Date().toISOString().slice(0,10)}.xlsx`);
+    XLSX.writeFile(wb, `VentasItems_${Store.date()}.xlsx`);
   } catch (e) { console.error('export ventas items', e); alert('No se pudo exportar los ítems de ventas.'); }
 });
 
 // Utilidades de productos (Supabase)
-async function allProducts() {
-  const { data, error } = await supabase.from('products').select('*').order('nombre', { ascending: true });
-  if (error) { console.error(error); return []; }
-  return data || [];
+async function allProducts() { return Store.all('products'); }
+function resolveProductFromList(rows,item) {
+  const exact=rows.find(p=>p.item===String(item).trim());
+  if(exact)return exact;
+  const matches=rows.filter(p=>normalizeItemKey(p.item)===normalizeItemKey(item));
+  if(matches.length>1)throw new Error('Hay varios productos con ese código. Escriba el ITEM exacto: '+item);
+  return matches[0]||null;
 }
 async function findProductByITEM(item) {
-  const { data, error } = await supabase.from('products').select('*').ilike('item', item);
-  if (error) { console.error(error); return null; }
-  return data?.[0] || null;
+  // Consulta solo ese ITEM (sin distinguir mayúsculas) para mostrar existencias al día
+  // sin descargar el catálogo completo en cada búsqueda.
+  const key = String(item || '').trim();
+  if (!key) return null;
+  const rows = await Store.all('products', q => q.ilike('item', key.replace(/[\\%_]/g, '\\$&')));
+  return resolveProductFromList(rows, key) || resolveProductFromList(await Store.catalog(), key);
 }
-async function upsertProduct(p) {
-  try {
-    if (p.id) {
-      const { error } = await supabase.from('products').update({
-        item: p.item,
-        nombre: p.nombre,
-        categoria: p.categoria,
-        ceja: p.ceja,
-        senkata: p.senkata,
-        unidad: p.unidad,
-        precio: p.precio
-      }).eq('id', p.id);
-      if (error) console.error('update product error', error);
-    } else {
-      // Match by item to avoid accidental duplicates when the product name changes.
-      const { data: existing, error: selErr } = await supabase
-        .from('products').select('id')
-        .eq('item', p.item).limit(1);
-      if (!selErr && existing && existing.length) {
-        const id = existing[0].id;
-        const { error } = await supabase.from('products').update({
-          nombre: p.nombre,
-          categoria: p.categoria,
-          ceja: p.ceja,
-          senkata: p.senkata,
-          unidad: p.unidad,
-          precio: p.precio
-        }).eq('id', id);
-        if (error) console.error('update product error', error);
-      } else {
-        const { error } = await supabase.from('products').insert(p);
-        if (error) console.error('insert product error', error);
-      }
-    }
-  } catch (e) {
-    console.error('upsertProduct exception', e);
-  }
+// Resuelve IDs con el catálogo breve; si falta algún ITEM (p. ej. recién creado en otro equipo)
+// se consulta el inventario completo antes de informar que no existe.
+async function productsFor(keys) {
+  const cached = await Store.catalog();
+  if (keys.every(k => !String(k || '').trim() || resolveProductFromList(cached, k))) return cached;
+  return allProducts();
 }
+async function upsertProduct() { throw new Error('Use el guardado transaccional de productos.'); }
 
-async function applyStockDeltaAtomicById(productId, deltaCeja, deltaSenkata, options = {}) {
-  const maxRetries = Number(options.maxRetries || 5);
-  const minCeja = Number(options.minCeja ?? -Infinity);
-  const minSenkata = Number(options.minSenkata ?? -Infinity);
-
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    const { data: current, error: currentErr } = await supabase
-      .from('products')
-      .select('id, ceja, senkata')
-      .eq('id', productId)
-      .maybeSingle();
-
-    if (currentErr || !current) {
-      return { ok: false, reason: 'product-not-found', error: currentErr };
-    }
-
-    const curCeja = Number(current.ceja || 0);
-    const curSenkata = Number(current.senkata || 0);
-    const nextCeja = curCeja + Number(deltaCeja || 0);
-    const nextSenkata = curSenkata + Number(deltaSenkata || 0);
-
-    if (nextCeja < minCeja) {
-      return { ok: false, reason: 'insufficient-ceja', current: curCeja, required: minCeja, next: nextCeja };
-    }
-    if (nextSenkata < minSenkata) {
-      return { ok: false, reason: 'insufficient-senkata', current: curSenkata, required: minSenkata, next: nextSenkata };
-    }
-
-    const { data: updated, error: updErr } = await supabase
-      .from('products')
-      .update({ ceja: nextCeja, senkata: nextSenkata })
-      .eq('id', productId)
-      .eq('ceja', curCeja)
-      .eq('senkata', curSenkata)
-      .select('id, ceja, senkata')
-      .maybeSingle();
-
-    if (updErr) {
-      return { ok: false, reason: 'update-error', error: updErr };
-    }
-    if (updated) {
-      return { ok: true, product: updated };
-    }
-  }
-
-  return { ok: false, reason: 'concurrency-retry-exhausted' };
-}
 
 function normalizeItemKey(item) {
   return String(item || '').trim().toLowerCase();
@@ -1148,42 +1051,11 @@ function aggregateSaleItems(rawItems) {
 }
 
 // Movimientos (Supabase)
-async function addMovement(mov) {
-  const { error } = await supabase.from('movements').insert(mov);
-  if (error) console.error('addMovement', error);
-}
-async function allMovements(options = {}) {
-  const includeAll = !!options.includeAll;
-  if (!includeAll) {
-    const { data, error } = await supabase.from('movements').select('*').order('fecha', { ascending: false });
-    if (error) { console.error(error); return []; }
-    return data || [];
-  }
-
-  const chunkSize = 1000;
-  let from = 0;
-  const rows = [];
-
-  while (true) {
-    const { data: chunk, error } = await supabase
-      .from('movements')
-      .select('*')
-      .order('fecha', { ascending: false })
-      .order('id', { ascending: false })
-      .range(from, from + chunkSize - 1);
-
-    if (error) {
-      console.error(error);
-      break;
-    }
-    if (!chunk || chunk.length === 0) break;
-
-    rows.push(...chunk);
-    if (chunk.length < chunkSize) break;
-    from += chunkSize;
-  }
-
-  return rows;
+async function allMovements() { return Store.all('movements'); }
+async function activeSales(configure, preloaded) {
+  // Las anulaciones se consultan filtradas; no se descarga toda la tabla de movimientos.
+  const [sales, cancelled] = await Promise.all([preloaded || Store.all('sales', configure), Store.cancellationNumbers()]);
+  return sales.filter(s => s.estado !== 'anulada' && !cancelled.has(String(s.numero)));
 }
 
 // Componentes dinámicos: fila de ingreso
@@ -1206,7 +1078,6 @@ function newIngresoRow() {
 
 async function newVentaRow() {
   const row = document.createElement('tr');
-  const list = await allProducts();
   const datalistId = 'datalistProductos';
   let dl = document.getElementById(datalistId);
   if (!dl) {
@@ -1214,7 +1085,6 @@ async function newVentaRow() {
     dl.id = datalistId;
     document.body.appendChild(dl);
   }
-  dl.innerHTML = list.map(p => `<option value="${p.item}">${p.nombre}</option>`).join('');
   row.innerHTML = `
     <td><input type="text" placeholder="ITEM" class="ven-sku" list="${datalistId}" required /></td>
     <td><input type="text" placeholder="Nombre (auto)" class="ven-nombre" disabled /></td>
@@ -1225,11 +1095,18 @@ async function newVentaRow() {
     <td><button type="button" class="remove">Eliminar</button></td>
   `;
   const skuInput = row.querySelector('.ven-sku');
+  let lookup = 0;
   skuInput.addEventListener('change', async () => {
-    const p = await findProductByITEM(skuInput.value);
+    const request = ++lookup;
+    const typed = skuInput.value;
     const nombreInput = row.querySelector('.ven-nombre');
     const cejaInput = row.querySelector('.ven-ceja');
     const precioInput = row.querySelector('.ven-pvent');
+    let p = null;
+    try { p = await findProductByITEM(typed); }
+    catch (e) { if (request === lookup) Store.notice(e.message || 'No se pudo buscar el producto.', true); }
+    // Ignora respuestas viejas si el usuario cambió el ITEM mientras se buscaba.
+    if (request !== lookup || skuInput.value !== typed) return;
     if (p) { nombreInput.value = p.nombre; cejaInput.value = (p.ceja ?? 0); precioInput.value = p.precio ?? 0; }
     else { nombreInput.value = ''; cejaInput.value = ''; precioInput.value = ''; }
     recalcVentaTotals();
@@ -1243,45 +1120,38 @@ async function newVentaRow() {
 ingAddItemBtn.addEventListener('click', () => ingItemsDiv.appendChild(newIngresoRow()));
 venAddItemBtn.addEventListener('click', async () => { venItemsDiv.appendChild(await newVentaRow()); recalcVentaTotals(); });
 ingItemsDiv.appendChild(newIngresoRow());
-(async () => { venItemsDiv.appendChild(await newVentaRow()); recalcVentaTotals(); })();
+(async () => { if(Access.can('sales.create')) { venItemsDiv.appendChild(await newVentaRow()); recalcVentaTotals(); } })().catch(e=>Store.notice(e.message,true));
 
 // Guardar ingreso
-formIngreso.addEventListener('submit', async (e) => {
+formIngreso.addEventListener('submit', e => {
   e.preventDefault();
-  const num = document.getElementById('ingNum').value.trim();
-  const fecha = document.getElementById('ingFecha').value;
-  const proveedor = document.getElementById('ingProveedor').value.trim();
-  const filas = Array.from(ingItemsDiv.querySelectorAll('.item-row'));
-  const items = filas.map(r => ({
-    sku: r.querySelector('.ing-sku').value.trim(),
-    nombre: r.querySelector('.ing-nombre').value.trim(),
-    categoria: (r.querySelector('.ing-cat').value || 'General').trim(),
-    cantidad: parseInt(r.querySelector('.ing-cant').value || '0', 10),
-    precioCompra: parseFloat(r.querySelector('.ing-pcomp').value || '0'),
-    precioVenta: parseFloat(r.querySelector('.ing-pvent').value || '0')
-  })).filter(it => it.sku && it.nombre && it.cantidad > 0);
-  if (!num || !fecha || !proveedor || items.length === 0) {
-    alert('Complete datos del comprobante y al menos una línea válida.');
-    return;
-  }
-  // Actualizar inventario en SENKATA (se considera ingreso al depósito SENKATA)
-  for (const it of items) {
-    const p = await findProductByITEM(it.sku);
-    if (p) {
-      await upsertProduct({ id: p.id, item: p.item, nombre: p.nombre, categoria: p.categoria, unidad: p.unidad || 'PCS', precio: p.precio || it.precioVenta || 0, ceja: p.ceja || 0, senkata: (p.senkata || 0) + it.cantidad });
-    } else {
-      await upsertProduct({ item: it.sku, nombre: it.nombre, categoria: it.categoria, unidad: 'PCS', precio: it.precioVenta || 0, ceja: 0, senkata: it.cantidad });
+  Store.run('receipt',formIngreso.querySelector('[type=submit]'),async () => {
+    const num=document.getElementById('ingNum').value.trim(), fecha=document.getElementById('ingFecha').value, proveedor=document.getElementById('ingProveedor').value.trim();
+    const items=[...ingItemsDiv.querySelectorAll('.item-row')].map(r=>({
+      sku:r.querySelector('.ing-sku').value.trim(), nombre:r.querySelector('.ing-nombre').value.trim(),categoria:r.querySelector('.ing-cat').value.trim()||'General',
+      cantidad:Store.number(r.querySelector('.ing-cant').value,'Cantidad',{integer:true,min:1}),
+      precioCompra:Store.money(Store.number(r.querySelector('.ing-pcomp').value,'Costo')),
+      precioVenta:Store.money(Store.number(r.querySelector('.ing-pvent').value||'0','Precio'))
+    }));
+    if (!num||!fecha||!proveedor||!items.length||items.some(i=>!i.sku||!i.nombre)) throw new Error('Complete todos los datos del ingreso.');
+    const result=await Store.commit('receipt',{numero:num,fecha,proveedor,items:items.map(i=>({...i,item:i.sku}))});
+    Store.notice('Ingreso guardado. Existencias actualizadas.');
+    try {
+      renderComprobante('ingreso',{comprobante:{numero:num,fecha,entidad:proveedor},items,total:result.total},ingresoComprobanteBody,ingresoComprobante);
+      ingImprimirBtn.disabled=false;
+      formIngreso.reset(); ingItemsDiv.replaceChildren(newIngresoRow()); document.getElementById('ingFecha').value=Store.date();
+    } catch (uiError) {
+      console.error(uiError);
+      Store.notice('Ingreso '+num+' guardado. No se pudo preparar el formulario siguiente; recargue la página.', true);
     }
-  }
-  const total = items.reduce((acc, it) => acc + (it.precioCompra || 0) * it.cantidad, 0);
-  await addMovement({ tipo: 'ingreso', fecha, item: '-', nombre: proveedor, cantidad: items.reduce((a,i)=>a+i.cantidad,0), detalle: `Ingreso comprobante ${num}`, total, descuento: 0 });
-  renderComprobante('ingreso', { comprobante: { numero: num, fecha, entidad: proveedor }, items, total }, ingresoComprobanteBody, ingresoComprobante);
-  ingImprimirBtn.disabled = false;
-  alert('Ingreso guardado. Inventario actualizado.');
+    refreshAfterWrite();
+  });
 });
+
 
 ingLimpiarBtn.addEventListener('click', () => {
   formIngreso.reset();
+  document.getElementById('ingFecha').value=Store.date();
   ingItemsDiv.innerHTML = '';
   ingItemsDiv.appendChild(newIngresoRow());
   ingresoComprobante.hidden = true;
@@ -1289,123 +1159,38 @@ ingLimpiarBtn.addEventListener('click', () => {
 });
 
 // Guardar venta (solo desde CEJA) con descuento
-formVenta.addEventListener('submit', async (e) => {
+formVenta.addEventListener('submit', e => {
   e.preventDefault();
-  if (ventaSubmitInProgress) return;
-  const num = document.getElementById('venNum').value.trim();
-  const fecha = document.getElementById('venFecha').value;
-  const cliente = document.getElementById('venCliente').value.trim();
-  let descuentoPct = parseFloat((document.getElementById('venDescPct').value || '0')); 
-  if (isNaN(descuentoPct) || descuentoPct < 0) descuentoPct = 0;
-  const filas = Array.from(venItemsDiv.querySelectorAll('tr'));
-  const rawItems = filas.map(r => ({
-    item: r.querySelector('.ven-sku')?.value.trim() || '',
-    cantidad: parseInt(r.querySelector('.ven-cant')?.value || '0', 10),
-    precioVenta: parseFloat(r.querySelector('.ven-pvent')?.value || '0'),
-  })).filter(it => it.item && it.cantidad > 0);
-  const items = aggregateSaleItems(rawItems);
-  if (!num || !fecha || !cliente || items.length === 0) {
-    alert('Complete datos del comprobante y al menos una línea válida.');
-    return;
-  }
-
-  ventaSubmitInProgress = true;
-  if (venGuardarBtn) venGuardarBtn.disabled = true;
-  const appliedDeltas = [];
-  try {
-    // Re-read product data right before committing stock changes.
-    const products = await allProducts();
-    const byItem = new Map(products.map(p => [normalizeItemKey(p.item), p]));
-
-    const detailedItems = [];
-    for (const it of items) {
-      const p = byItem.get(normalizeItemKey(it.item));
-      if (!p) throw new Error(`Producto ${it.item} no existe.`);
-      detailedItems.push({ item: p.item, nombre: p?.nombre ?? it.item, cantidad: it.cantidad, precioVenta: it.precioVenta, productId: p.id });
-    }
-
-    const subtotal = detailedItems.reduce((acc, it) => acc + it.precioVenta * it.cantidad, 0);
-    const descuento = (subtotal * descuentoPct) / 100;
-    const totalConDesc = subtotal - descuento;
-
-    // Apply stock changes first with optimistic concurrency and hard non-negative checks.
-    for (const it of detailedItems) {
-      const res = await applyStockDeltaAtomicById(it.productId, -it.cantidad, 0, { minCeja: 0 });
-      if (!res.ok) {
-        if (res.reason === 'insufficient-ceja') {
-          throw new Error(`Stock CEJA insuficiente para ${it.nombre} (ITEM ${it.item}). Disponible: ${res.current}`);
-        }
-        throw new Error(`No se pudo actualizar stock para ${it.item} (${res.reason}).`);
-      }
-      appliedDeltas.push({ productId: it.productId, ceja: it.cantidad, senkata: 0 });
-    }
-
-    // Persist sales rows; if this fails, rollback stock to avoid drift.
-    const { data: saleRow, error: saleErr } = await supabase
-      .from('sales')
-      .insert({ numero: num, fecha, cliente, subtotal, descuento_pct: descuentoPct, descuento, total: totalConDesc })
-      .select('id')
-      .single();
-    if (saleErr || !saleRow?.id) {
-      throw new Error('No se pudo registrar la cabecera de venta.');
-    }
-
-    const itemsRows = detailedItems.map(di => ({
-      sale_id: saleRow.id,
-      item: di.item,
-      nombre: di.nombre,
-      cantidad: di.cantidad,
-      precio: di.precioVenta,
-      subtotal: di.precioVenta * di.cantidad
-    }));
-    const { error: itemsErr } = await supabase.from('sales_items').insert(itemsRows);
-    if (itemsErr) {
-      await supabase.from('sales').delete().eq('id', saleRow.id);
-      throw new Error('No se pudieron registrar los ítems de la venta.');
-    }
-
-    await addMovement({
-      tipo: 'venta',
-      fecha,
-      item: '-',
-      nombre: cliente,
-      cantidad: detailedItems.reduce((a, i) => a + i.cantidad, 0),
-      detalle: `Venta comprobante ${num}`,
-      total: totalConDesc,
-      descuento
+  Store.run('sale',venGuardarBtn,async () => {
+    const num=document.getElementById('venNum').value.trim(),fecha=document.getElementById('venFecha').value,cliente=document.getElementById('venCliente').value.trim();
+    const pct=Store.money(Store.number(document.getElementById('venDescPct').value||0,'Descuento',{max:100}));
+    const products=await productsFor([...venItemsDiv.querySelectorAll('.ven-sku')].map(i=>i.value));
+    const items=[...venItemsDiv.querySelectorAll('tr')].map(r=>{
+      const item=r.querySelector('.ven-sku').value.trim(); const p=resolveProductFromList(products,item);
+      if(!p) throw new Error('Producto no encontrado: '+item);
+      return {product_id:p.id,item:p.item,nombre:p.nombre,cantidad:Store.number(r.querySelector('.ven-cant').value,'Cantidad',{integer:true,min:1}),precio:Store.money(Store.number(r.querySelector('.ven-pvent').value,'Precio'))};
     });
-
-    setVentaTotals(subtotal, descuento, totalConDesc);
-    renderComprobante('venta', { comprobante: { numero: num, fecha, entidad: cliente }, items: detailedItems, total: totalConDesc }, ventaComprobanteBody, ventaComprobante);
-    venImprimirBtn.disabled = false;
-    if (venGuardarBtn) {
-      venGuardarBtn.disabled = true;
-      venGuardarBtn.setAttribute('data-hint', 'Guardado. Usa «Limpiar» para habilitar.');
-      venGuardarBtn.title = 'Guardado. Usa «Limpiar» para habilitar.';
+    if(!num||!fecha||!cliente||!items.length) throw new Error('Complete cliente, fecha y productos.');
+    const result=await Store.commit('sale_create',{numero:num,fecha,cliente,descuento_pct:pct,items});
+    Store.notice('Venta '+num+' guardada correctamente.');
+    // Desde aquí los fallos visuales jamás revierten stock.
+    try {
+      window.dispatchEvent(new CustomEvent('venta:guardada',{detail:{numero:num}}));
+      renderComprobante('venta',{comprobante:{numero:num,fecha,entidad:cliente},items:items.map(i=>({...i,precioVenta:i.precio})),...result},ventaComprobanteBody,ventaComprobante);
+      venImprimirBtn.disabled=false;
+      formVenta.reset(); venItemsDiv.replaceChildren(await newVentaRow()); setAutoSaleNumber(); document.getElementById('venFecha').value=Store.date(); recalcVentaTotals();
+    } catch (uiError) {
+      console.error(uiError);
+      Store.notice('Venta '+num+' guardada. No se pudo preparar el formulario siguiente; recargue la página antes de otra venta.', true);
     }
-    window.dispatchEvent(new CustomEvent('venta:guardada', { detail: { numero: num } }));
-    alert('Venta guardada. Inventario actualizado.');
-    await refreshInventoryUI();
-    await refreshDashboard();
-    await refreshMovDatalist();
-    await refreshVentasHistorial();
-    setAutoSaleNumber();
-  } catch (err) {
-    console.error('sale submit error', err);
-    // Best-effort rollback to preserve CEJA if sale persistence failed midway.
-    for (let i = appliedDeltas.length - 1; i >= 0; i--) {
-      const rb = appliedDeltas[i];
-      await applyStockDeltaAtomicById(rb.productId, rb.ceja, rb.senkata, { minCeja: 0 });
-    }
-    alert(err?.message || 'No se pudo guardar la venta.');
-    if (venGuardarBtn) venGuardarBtn.disabled = false;
-  } finally {
-    ventaSubmitInProgress = false;
-  }
+    refreshAfterWrite();
+  });
 });
+
 
 venLimpiarBtn.addEventListener('click', async () => {
   formVenta.reset();
+  document.getElementById('venFecha').value=Store.date();
   venItemsDiv.innerHTML = '';
   venItemsDiv.appendChild(await newVentaRow());
   ventaComprobante.hidden = true;
@@ -1445,10 +1230,10 @@ function renderComprobante(tipo, mov, targetBody, container) {
   const rows = mov.items.map(it => {
     if (esIngreso) {
       const subtotal = (it.precioCompra || 0) * it.cantidad;
-      return `<tr><td>${it.sku}</td><td>${it.nombre}</td><td>${it.categoria ?? ''}</td><td>${it.cantidad}</td><td>${fmt(it.precioCompra)}</td><td>${fmt(subtotal)}</td></tr>`;
+      return `<tr><td>${escapeHtml(it.sku)}</td><td>${escapeHtml(it.nombre)}</td><td>${escapeHtml(it.categoria ?? '')}</td><td>${it.cantidad}</td><td>${fmt(it.precioCompra)}</td><td>${fmt(subtotal)}</td></tr>`;
     } else {
       const subtotal = (it.precioVenta || 0) * it.cantidad;
-      return `<tr><td>${it.item ?? it.sku ?? ''}</td><td>${it.nombre}</td><td>${it.cantidad}</td><td>${fmt(it.precioVenta)}</td><td>${fmt(subtotal)}</td></tr>`;
+      return `<tr><td>${escapeHtml(it.item ?? it.sku ?? '')}</td><td>${escapeHtml(it.nombre)}</td><td>${it.cantidad}</td><td>${fmt(it.precioVenta)}</td><td>${fmt(subtotal)}</td></tr>`;
     }
   }).join('');
 
@@ -1459,17 +1244,17 @@ function renderComprobante(tipo, mov, targetBody, container) {
     <div class="comprobante-doc ${esIngreso ? 'comprobante-ingreso' : 'comprobante-venta'}">
       <div class="comp-brand">
         <div class="brand-left">
-          <div class="brand-title">${brand}</div>
+          <div class="brand-title">${escapeHtml(brand)}</div>
           <div class="brand-sub">${tipoLabel}</div>
         </div>
         <div class="brand-right">
-          <div><strong>N°:</strong> ${mov.comprobante.numero}</div>
-          <div><strong>Fecha:</strong> ${mov.comprobante.fecha}</div>
+          <div><strong>N°:</strong> ${escapeHtml(mov.comprobante.numero)}</div>
+          <div><strong>Fecha:</strong> ${escapeHtml(mov.comprobante.fecha)}</div>
         </div>
       </div>
 
       <div class="comp-meta">
-        <div><strong>${entidadLabel}:</strong> ${mov.comprobante.entidad}</div>
+        <div><strong>${entidadLabel}:</strong> ${escapeHtml(mov.comprobante.entidad)}</div>
         <div><strong>Tipo:</strong> ${esIngreso ? 'Ingreso' : 'Venta'}</div>
       </div>
 
@@ -1477,6 +1262,7 @@ function renderComprobante(tipo, mov, targetBody, container) {
         <thead><tr>${cols}</tr></thead>
         <tbody>${rows}</tbody>
         <tfoot>
+          ${!esIngreso && mov.descuento ? '<tr><td colspan="4">Subtotal</td><td>'+fmt(mov.subtotal)+'</td></tr><tr><td colspan="4">Descuento</td><td>'+fmt(mov.descuento)+'</td></tr>' : ''}
           <tr>
             <td colspan="${esIngreso ? 5 : 4}" class="comp-total-label">Total</td>
             <td class="comp-total-value">${fmt(mov.total)}</td>
@@ -1515,18 +1301,43 @@ function setVentaTotals(sub, desc, tot) {
   if (ventaTotalEl) ventaTotalEl.textContent = fmt(tot);
 }
 
+// Librerías pesadas (Excel ≈880 KB, PDF ≈400 KB) se descargan solo al usarlas.
+const VENDOR_SCRIPTS={xlsx:['vendor/xlsx.full.min.js'],pdf:['vendor/jspdf.umd.min.js','vendor/jspdf.autotable.min.js']};
+const VENDOR_READY={xlsx:()=>!!window.XLSX,pdf:()=>!!window.jspdf?.jsPDF?.API?.autoTable};
+const vendorLoads={};
+function loadVendor(name){
+  if(VENDOR_READY[name]())return Promise.resolve(true);
+  vendorLoads[name]??=(async()=>{
+    for(const src of VENDOR_SCRIPTS[name]){
+      await new Promise((resolve,reject)=>{
+        const el=document.createElement('script');el.src=src;el.async=false;
+        const timer=setTimeout(()=>reject(new Error('Tiempo agotado al cargar '+src)),30000);
+        el.onload=()=>{clearTimeout(timer);resolve();};el.onerror=()=>{clearTimeout(timer);reject(new Error('No se pudo cargar '+src));};
+        document.head.append(el);
+      });
+    }
+    return VENDOR_READY[name]();
+  })().catch(e=>{delete vendorLoads[name];console.warn(e);return false;});
+  return vendorLoads[name];
+}
+// La impresión de comprobantes es frecuente: el PDF se precarga cuando el navegador está libre.
+(window.requestIdleCallback||(fn=>setTimeout(fn,4000)))(()=>void loadVendor('pdf'),{timeout:8000});
+
 // ===== PDF helpers (jsPDF) =====
-let lastComprobante = null;
+const lastComprobantes = {};
 function setLastComprobante(tipo, mov) {
-  lastComprobante = { tipo, mov };
+  lastComprobantes[tipo] = mov;
 }
 
 async function descargarComprobantePDF(tipo, options = {}) {
   try {
-    const payload = lastComprobante && lastComprobante.tipo === tipo ? lastComprobante.mov : null;
+    const payload = options.payload || lastComprobantes[tipo] || null;
     if (!payload) { alert('No hay comprobante disponible para exportar.'); return; }
     const esIngreso = tipo === 'ingreso';
+    const esCotizacion = tipo === 'cotizacion';
+    const tituloDocumento = esCotizacion ? 'COTIZACIÓN' : esIngreso ? 'Comprobante de Ingreso' : 'Comprobante de Venta';
     const brand = getSettings().brandName || 'IMPORTACIONES MB';
+    await loadVendor('pdf');
     const jspdfNS = window.jspdf || {};
     const jsPDF = jspdfNS.jsPDF;
     if (!jsPDF || !window.jspdf) { alert('Generador PDF no disponible.'); return; }
@@ -1537,26 +1348,33 @@ async function descargarComprobantePDF(tipo, options = {}) {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(16);
     if (!esIngreso) { doc.setTextColor(59, 130, 246); }
-    doc.text(String(brand || 'IMPORTACIONES MB'), 40, y);
+    const brandLines=doc.splitTextToSize(String(brand || 'IMPORTACIONES MB'),pageWidth-80);
+    doc.text(brandLines, 40, y);
     doc.setTextColor(0, 0, 0);
-    y += 18;
+    y += brandLines.length*18;
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(11);
-    doc.text(esIngreso ? 'Comprobante de Ingreso' : 'Comprobante de Venta', 40, y);
+    doc.text(tituloDocumento, 40, y);
     // Meta
     const metaRight = [
       `N°: ${payload.comprobante.numero}`,
       `Fecha: ${payload.comprobante.fecha}`
     ];
-    metaRight.forEach((t, i) => {
-      doc.text(t, pageWidth - 40, 40 + (i * 14), { align: 'right' });
-    });
     y += 18;
+    for(const text of metaRight){const lines=doc.splitTextToSize(text,pageWidth-80);doc.text(lines,40,y);y+=lines.length*14;}
+    if(esCotizacion){
+      doc.setTextColor(110,75,15);
+      doc.text('Documento informativo. No es una venta ni un comprobante de pago.',40,y);y+=16;
+      doc.setTextColor(0,0,0);
+      doc.text(`Válida hasta: ${payload.validaHasta || '-'}`,40,y);y+=18;
+    }
     // Entidad
     doc.setFont('helvetica', 'bold'); doc.text(esIngreso ? 'Proveedor:' : 'Cliente:', 40, y);
-    doc.setFont('helvetica', 'normal'); doc.text(String(payload.comprobante.entidad || '-'), 110, y); y += 12;
+    doc.setFont('helvetica', 'normal');
+    const entityLines=doc.splitTextToSize(String(payload.comprobante.entidad || '-'),pageWidth-150);
+    doc.text(entityLines,110,y); y+=entityLines.length*14;
     doc.setFont('helvetica', 'bold'); doc.text('Tipo:', 40, y);
-    doc.setFont('helvetica', 'normal'); doc.text(esIngreso ? 'Ingreso' : 'Venta', 80, y); y += 10;
+    doc.setFont('helvetica', 'normal'); doc.text(esCotizacion ? 'Cotización' : esIngreso ? 'Ingreso' : 'Venta', 80, y); y += 10;
 
     // Tabla
     const head = esIngreso
@@ -1580,20 +1398,38 @@ async function descargarComprobantePDF(tipo, options = {}) {
       styles: { font: 'helvetica', fontSize: 10, cellPadding: 6 },
       headStyles: { fillColor: [238,245,255], textColor: [11,58,119] },
       theme: 'grid',
-      margin: { left: 40, right: 40 }
+      margin: { left: 40, right: 40, top: 50, bottom: 65 }
     });
-    const afterTableY = doc.lastAutoTable.finalY || (y + 40);
+    let afterTableY = doc.lastAutoTable.finalY || (y + 40);
+    if(afterTableY + 85 > doc.internal.pageSize.getHeight()-65){doc.addPage();afterTableY=40;}
+    if(!esIngreso && payload.descuento){
+      doc.text(`Subtotal: ${fmt(payload.subtotal)}`,pageWidth-40,afterTableY+18,{align:'right'});
+      doc.text(`Descuento: ${fmt(payload.descuento)}`,pageWidth-40,afterTableY+34,{align:'right'});
+      afterTableY+=40;
+    }
     doc.setFont('helvetica', 'bold');
     if (!esIngreso) { doc.setTextColor(59, 130, 246); }
     doc.text(`Total: ${fmt(payload.total)}`, pageWidth - 40, afterTableY + 24, { align: 'right' });
     doc.setTextColor(0, 0, 0);
 
-    const fileName = `${esIngreso ? 'Ingreso' : 'Venta'}_${payload.comprobante.numero}.pdf`;
+    if(esCotizacion){
+      const pageCount=doc.getNumberOfPages();
+      for(let page=1;page<=pageCount;page++){
+        doc.setPage(page);doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(90,100,115);
+        const bottom=doc.internal.pageSize.getHeight()-40;
+        doc.text('COTIZACIÓN - No reserva existencias. Disponibilidad a confirmar al realizar la venta.',40,bottom);
+        doc.text(`${page} / ${pageCount}`,pageWidth-40,bottom+13,{align:'right'});
+      }
+    }
+    if(options.returnDocument) return doc;
+    const fileName = `${esCotizacion ? 'Cotizacion' : esIngreso ? 'Ingreso' : 'Venta'}_${payload.comprobante.numero}.pdf`;
     if (options.autoPrint) {
       // Abrir nueva pestaña e invocar impresión nativa del visor PDF
       if (doc.autoPrint) doc.autoPrint();
       const blobUrl = doc.output('bloburl');
-      window.open(blobUrl, '_blank');
+      const opened=window.open(blobUrl, '_blank');
+      if(!opened){doc.save(fileName);Store.notice('El navegador bloqueó la ventana de impresión. Se descargó el PDF para imprimirlo.');}
+      else {opened.opener=null;setTimeout(()=>URL.revokeObjectURL(blobUrl),60000);}
     } else if (options.open) {
       const url = doc.output('bloburl');
       window.open(url, '_blank');
@@ -1606,7 +1442,7 @@ async function descargarComprobantePDF(tipo, options = {}) {
   }
 }
 function recalcVentaTotals() {
-  const descuentoPct = parseFloat((document.getElementById('venDescPct')?.value || '0')) || 0;
+  const descuentoPct = Store.money(parseFloat((document.getElementById('venDescPct')?.value || '0')) || 0);
   const filas = Array.from(venItemsDiv.querySelectorAll('tr'));
   const items = filas.map(r => ({
     cantidad: parseFloat(r.querySelector('.ven-cant')?.value || '0') || 0,
@@ -1618,8 +1454,8 @@ function recalcVentaTotals() {
     const cell = r.querySelector('.ven-subtotal');
     if (cell) cell.textContent = fmt(sub);
   });
-  const subtotal = items.reduce((a,i)=>a+(i.cantidad*i.precio),0);
-  const descuento = subtotal * (descuentoPct/100);
+  const subtotal = Store.money(items.reduce((a,i)=>a+Store.money(i.cantidad*i.precio),0));
+  const descuento = Store.money(subtotal * (descuentoPct/100));
   const total = subtotal - descuento;
   setVentaTotals(subtotal, descuento, total);
 }
@@ -1633,23 +1469,21 @@ document.getElementById('venItems')?.addEventListener('input', (e) => {
 
 // ===== CSV Upload Logic =====
 function parseCSV(text) {
-  // Robust-ish CSV parser: commas and semicolons; supports quotes
-  const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
-  const rows = [];
-  for (const line of lines) {
-    const delimiter = line.includes(';') && !line.includes(',') ? ';' : ',';
-    const cells = [];
-    let cur = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') { inQuotes = !inQuotes; continue; }
-      if (ch === delimiter && !inQuotes) { cells.push(cur.trim()); cur = ''; }
-      else { cur += ch; }
-    }
-    cells.push(cur.trim());
-    rows.push(cells.map(c => c.replace(/^"|"$/g, '').trim()));
+  text=String(text).replace(/^\uFEFF/,'');
+  const header=text.split(/\r?\n/)[0], delimiter=header.includes(';')?';':',';
+  const rows=[]; let row=[],cell='',quoted=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(ch==='"'){
+      if(quoted&&text[i+1]==='"'){cell+='"';i++;}else quoted=!quoted;
+    }else if(ch===delimiter&&!quoted){row.push(cell.trim());cell='';}
+    else if((ch==='\n'||ch==='\r')&&!quoted){
+      if(ch==='\r'&&text[i+1]==='\n')i++;
+      row.push(cell.trim());if(row.some(Boolean))rows.push(row);row=[];cell='';
+    }else cell+=ch;
   }
+  if(quoted)throw new Error('CSV inválido: falta cerrar una comilla.');
+  row.push(cell.trim());if(row.some(Boolean))rows.push(row);
   return rows;
 }
 
@@ -1677,9 +1511,9 @@ function normalizeProductRow(row, headerMap) {
   const errors = [];
   if (!itemNorm) errors.push('ITEM vacío');
   if (!nombreNorm) errors.push('Nombre vacío');
-  if (Number.isNaN(ceja) || ceja < 0) errors.push('CEJA inválido');
-  if (Number.isNaN(senkata) || senkata < 0) errors.push('SENKATA inválido');
-  if (Number.isNaN(precio) || precio < 0) errors.push('Precio inválido');
+  if (!Number.isSafeInteger(ceja) || ceja < 0) errors.push('CEJA inválido');
+  if (!Number.isSafeInteger(senkata) || senkata < 0) errors.push('SENKATA inválido');
+  if (!Number.isFinite(precio) || precio < 0) errors.push('Precio inválido');
   return { item: itemNorm, nombre: nombreNorm, ceja: ceja || 0, senkata: senkata || 0, unidad, precio: precio || 0, categoria, errors };
 }
 
@@ -1719,78 +1553,50 @@ csvPreviewBtn?.addEventListener('click', async () => {
   csvPreviewWrap.hidden = false;
   csvPreviewBody.innerHTML = csvPreparedRows.map(r => `
     <tr>
-      <td>${r.item}</td>
-      <td>${r.nombre}</td>
+      <td>${escapeHtml(r.item)}</td>
+      <td>${escapeHtml(r.nombre)}</td>
       <td>${r.ceja}</td>
       <td>${r.senkata}</td>
       <td>${r.unidad}</td>
       <td>${fmt(r.precio)}</td>
-      <td>${r.categoria}</td>
+      <td>${escapeHtml(r.categoria)}</td>
       <td>${r.errors.length ? `<span style="color:#b00">${r.errors.join('; ')}</span>` : '<span style="color:#0a6cff">OK</span>'}</td>
     </tr>
   `).join('');
 });
 
-csvUploadBtn?.addEventListener('click', async () => {
-  if (!csvPreparedRows || csvPreparedRows.length === 0) { alert('Primero previsualice el CSV'); return; }
-  const validRows = csvPreparedRows.filter(r => r.errors.length === 0);
-  if (validRows.length === 0) { alert('No hay filas válidas para subir'); return; }
-  // Strip non-DB fields before upsert
-  const payload = validRows.map(r => ({
-    item: r.item,
-    nombre: r.nombre,
-    ceja: r.ceja,
-    senkata: r.senkata,
-    unidad: r.unidad,
-    precio: r.precio,
-    categoria: r.categoria
-  }));
-  // Fallback-safe insert/update per row to avoid server 500s when constraints differ
-  const chunkSize = 200; // smaller chunks to reduce load
-  for (let i=0; i<payload.length; i+=chunkSize) {
-    const chunk = payload.slice(i, i+chunkSize);
-    for (const r of chunk) {
-      try {
-        // Try to find existing by (item,nombre)
-        const { data: exists, error: selErr } = await supabase
-          .from('products')
-          .select('id')
-          .eq('item', r.item)
-          .eq('nombre', r.nombre)
-          .limit(1);
-        if (selErr) { console.error('CSV select error', selErr); continue; }
-        if (exists && exists.length) {
-          const id = exists[0].id;
-          const { error: updErr } = await supabase
-            .from('products')
-            .update({ categoria: r.categoria, ceja: r.ceja, senkata: r.senkata, unidad: r.unidad, precio: r.precio })
-            .eq('id', id);
-          if (updErr) { console.error('CSV update error', updErr); }
-        } else {
-          const { error: insErr } = await supabase
-            .from('products')
-            .insert(r);
-          if (insErr) { console.error('CSV insert error', insErr); }
-        }
-      } catch (rowErr) {
-        console.error('CSV row exception', rowErr);
-      }
-    }
-  }
-  await refreshInventoryUI();
-  alert(`Subida completada. Filas válidas: ${validRows.length}.`);
-});
+csvUploadBtn?.addEventListener('click',()=>Store.run('csv',csvUploadBtn,async()=>{
+  if(!csvPreparedRows.length) throw new Error('Primero previsualice el CSV.');
+  if(csvPreparedRows.some(r=>r.errors.length)) throw new Error('Corrija todas las filas inválidas antes de importar.');
+  const list=await allProducts(), seen=new Set();
+  const products=csvPreparedRows.map(r=>{
+    const key=normalizeItemKey(r.item); if(seen.has(key)) throw new Error('ITEM repetido en el archivo: '+r.item); seen.add(key);
+    const p=list.find(p=>normalizeItemKey(p.item)===key);
+    const changes={item:r.item,nombre:r.nombre,categoria:r.categoria,unidad:r.unidad,precio:Store.number(r.precio,'Precio'),ceja:Store.number(r.ceja,'CEJA',{integer:true}),senkata:Store.number(r.senkata,'SENKATA',{integer:true})};
+    // Un CSV de catálogo nunca reemplaza existencias de productos anteriores.
+    if(p){ delete changes.ceja; delete changes.senkata; delete changes.item; }
+    return {id:p?.id||null,...(p?{expected:p}:{}),changes};
+  });
+  if(!confirm('Importar '+products.length+' productos. En los existentes solo se actualizará el catálogo y precio; sus existencias se conservarán.')) return;
+  await Store.commit('products_save',{products},'csv');
+  csvPreparedRows=[]; csvPreviewWrap.hidden=true; Store.notice('Importación completa guardada.');
+  refreshAfterWrite();
+}));
 
-// Inventario UI
-async function refreshCategoryFilter() {
-  const list = await allProducts();
+
+async function refreshCategoryFilter(list) {
   const cats = Array.from(new Set(list.map(p => (p.categoria || 'General')))).sort();
-  invCategoria.innerHTML = '<option value="">Todas</option>' + cats.map(c => `<option value="${c}">${c}</option>`).join('');
+  invCategoria.innerHTML = '<option value="">Todas</option>' + cats.map(c => `<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('');
 }
 
 async function refreshInventoryUI() {
-  await refreshCategoryFilter();
+  if(!Access.can('inventory.read')) return;
+  if(inventoryEditMode){inventoryPendingSync=true;return;}
   const list = await allProducts();
+  const selectedCategory=invCategoria.value;
+  await refreshCategoryFilter(list);
+  invCategoria.value=selectedCategory;
+  if(inventoryEditMode){inventoryPendingSync=true;return;}
   renderInventoryTable(list);
 }
 
@@ -1807,8 +1613,8 @@ function renderInventoryTable(list) {
       <td>${fmt(p.precio ?? 0)}</td>
       <td class="col-actions">
         <button class="secondary btn-edit">Editar</button>
-        <button class="btn-delete">Eliminar</button>
-        <button class="secondary btn-ver-ventas" title="Ver ventas de este producto">🔎</button>
+
+        <button class="secondary btn-ver-ventas" title="Ver ventas y movimientos de este producto" aria-label="Ver historial de ${escapeAttr(p.item)}">🔎</button>
       </td>
     </tr>
   `).join('');
@@ -1825,31 +1631,76 @@ async function onVerVentasProducto(e) {
   await showProductoVentasModal(item);
 }
 
-async function showProductoVentasModal(item) {
+let productoHistoryRequest = 0;
+
+function renderProductoMovimientos(rows, timestampAvailable) {
+  const sorted = [...rows].sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')) || b.id - a.id);
+  const reversed = new Set(rows.map(m => String(m.detalle).match(/^Reversión movimiento (\d+)/)?.[1]).filter(Boolean));
+  const timeFormat = new Intl.DateTimeFormat('es-BO', {
+    timeZone: 'America/La_Paz', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+  });
+  const warning = timestampAvailable ? '' : '<p class="note">Para consultar la hora de registro, instale migrations/003_product_movement_history.sql en el clon. Las fechas y transferencias siguen disponibles.</p>';
+  if (!sorted.length) return warning + '<p>No hay movimientos registrados para este producto.</p>';
+  return `${warning}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Fecha del movimiento</th><th>Registro (hora de Bolivia)</th><th>Origen</th><th>Destino</th><th>Cantidad</th><th>Estado</th><th>Detalle</th></tr></thead>
+        <tbody>${sorted.map(m => {
+          const reversal = String(m.detalle).startsWith('Reversión movimiento ');
+          const registered = m.created_at ? timeFormat.format(new Date(m.created_at)) : 'Hora no registrada';
+          return `<tr>
+            <td>${escapeHtml(m.fecha)}</td><td>${escapeHtml(registered)}</td>
+            <td>${reversal ? 'CEJA' : 'SENKATA'}</td><td>${reversal ? 'SENKATA' : 'CEJA'}</td>
+            <td>${Math.abs(Number(m.cantidad))}</td>
+            <td>${reversal ? 'Reversión' : reversed.has(String(m.id)) ? 'Revertido' : 'Transferencia'}</td>
+            <td>${escapeHtml(cleanMovementDetalle(m.detalle))}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>
+    <p class="note">Se muestran transferencias entre depósitos y sus reversiones, sin borrar el movimiento original. La fecha del movimiento es la fecha comercial; el registro indica cuándo se confirmó. Los registros antiguos sin hora se identifican explícitamente.</p>`;
+}
+
+async function showProductoVentasModal(item, view = 'sales') {
+  const request = ++productoHistoryRequest;
+  const body = document.getElementById('productoVentasBody');
+  const titulo = document.getElementById('productoVentasTitulo');
+  titulo.textContent = `Historial del producto: ${item}`;
+  body.textContent = 'Cargando historial...';
+  body.setAttribute('aria-busy', 'true');
+  for (const [id, tabView] of [['productoHistVentas', 'sales'], ['productoHistMovimientos', 'movements']]) {
+    const button = document.getElementById(id);
+    button.classList.toggle('active', tabView === view);
+    button.setAttribute('aria-pressed', String(tabView === view));
+    button.onclick = () => showProductoVentasModal(item, tabView);
+  }
+  openProductoVentasModal();
   try {
-    // Get product for title context
     const prod = await findProductByITEM(item);
-    const titulo = document.getElementById('productoVentasTitulo');
-    if (titulo) titulo.textContent = `Ventas del producto: ${prod?.nombre || item} (${item})`;
+    if (request !== productoHistoryRequest) return;
+    titulo.textContent = `Historial del producto: ${prod?.nombre || item} (${item})`;
+    if (view === 'movements') {
+      if(!Access.can('movements.read')) {body.textContent='Su rol no tiene permiso para consultar movimientos.';return;}
+      const { rows, timestampAvailable } = await Store.productTransfers(item);
+      if (request !== productoHistoryRequest) return;
+      body.innerHTML = renderProductoMovimientos(rows, timestampAvailable);
+      return;
+    }
 
-    // Fetch all sales_items entries for this item
-    const { data: si, error: siErr } = await supabase
-      .from('sales_items')
-      .select('*')
-      .ilike('item', item)
-      .order('id', { ascending: true });
-    const body = document.getElementById('productoVentasBody');
-    if (siErr) { console.error(siErr); body.innerHTML = '<p>Error al cargar ventas del producto.</p>'; return openProductoVentasModal(); }
-    if (!si || si.length === 0) { body.innerHTML = '<p>No hay ventas registradas para este producto.</p>'; return openProductoVentasModal(); }
+    if(!Access.can('sales.read')) {body.textContent='Su rol no tiene permiso para consultar ventas.';return;}
+    // Solo las líneas del producto, sus ventas por ID y la lista de anulaciones (en paralelo).
+    const annulmentsRequest=Store.cancellationNumbers();
+    annulmentsRequest.catch(()=>{});
+    const si=(await Store.all('sales_items',q=>q.eq('item',item))).filter(i=>i.cantidad>0);
+    if (request !== productoHistoryRequest) return;
+    if(!si.length){body.textContent='No hay ventas registradas para este producto.';return;}
+    const saleIds=[...new Set(si.map(i=>i.sale_id))];
+    const chunks=[];for(let i=0;i<saleIds.length;i+=150)chunks.push(saleIds.slice(i,i+150));
+    const [salesChunks,anuladasSet]=await Promise.all([Promise.all(chunks.map(ids=>Store.all('sales',q=>q.in('id',ids)))),annulmentsRequest]);
+    const sales=salesChunks.flat();
+    if (request !== productoHistoryRequest) return;
 
-    // Fetch related sales rows
-    const saleIds = Array.from(new Set(si.map(r => r.sale_id))).filter(Boolean);
-    const { data: sales, error: sErr } = await supabase
-      .from('sales')
-      .select('*')
-      .in('id', saleIds)
-      .order('fecha', { ascending: false });
-    if (sErr) { console.error(sErr); body.innerHTML = '<p>Error al cargar ventas del producto.</p>'; return openProductoVentasModal(); }
     const salesMap = new Map((sales || []).map(s => [s.id, s]));
 
     // Build rows combining sale info and quantities/prices per occurrence
@@ -1858,23 +1709,7 @@ async function showProductoVentasModal(item) {
       .filter(x => !!x.s)
       .sort((a, b) => (new Date(b.s.fecha) - new Date(a.s.fecha)) || (b.s.id - a.s.id));
 
-    if (rows.length === 0) { body.innerHTML = '<p>No hay ventas válidas encontradas para este producto.</p>'; return openProductoVentasModal(); }
-
-    // Detect anuladas: by sales.estado and movements "Anulación comprobante <numero>"
-    const anuladasSet = new Set((sales || []).filter(s => s.estado === 'anulada').map(s => String(s.numero)));
-    try {
-      const saleNumbers = Array.from(new Set((sales || []).map(s => String(s.numero))));
-      if (saleNumbers.length) {
-        const detalles = saleNumbers.map(n => `Anulación comprobante ${n}`);
-        const { data: annMovs } = await supabase.from('movements').select('detalle').in('detalle', detalles);
-        if (Array.isArray(annMovs)) {
-          annMovs.forEach(m => {
-            const n = String(m.detalle || '').replace('Anulación comprobante ', '');
-            if (n) anuladasSet.add(n);
-          });
-        }
-      }
-    } catch (annErr) { console.warn('annul detect warn', annErr); }
+    if (rows.length === 0) { body.innerHTML = '<p>No hay ventas válidas encontradas para este producto.</p>'; return; }
 
     const nonAnuladasRows = rows.filter(({ s }) => !anuladasSet.has(String(s.numero)) && s.estado !== 'anulada');
     const totalCantidad = nonAnuladasRows.reduce((acc, x) => acc + (x.r.cantidad || 0), 0);
@@ -1899,9 +1734,9 @@ async function showProductoVentasModal(item) {
               const cls = isAnulada ? 'venta-anulada' : '';
               return `
               <tr class="${cls}">
-                <td>${s.fecha || ''}</td>
-                <td>${s.numero || ''}</td>
-                <td>${s.cliente || ''}</td>
+                <td>${escapeHtml(s.fecha)}</td>
+                <td>${escapeHtml(s.numero)}</td>
+                <td>${escapeHtml(s.cliente)}</td>
                 <td>${r.cantidad ?? ''}</td>
                 <td>${fmt(r.precio ?? 0)}</td>
                 <td>${fmt((r.subtotal ?? (r.cantidad * r.precio)) || 0)}</td>
@@ -1921,12 +1756,13 @@ async function showProductoVentasModal(item) {
       <p class="note">Las filas en rojo pertenecen a ventas anuladas y no se suman a los totales.</p>
     `;
 
-    openProductoVentasModal();
   } catch (e) {
-    console.error('producto ventas modal error', e);
-    const body = document.getElementById('productoVentasBody');
-    if (body) body.innerHTML = '<p>Error inesperado al cargar las ventas del producto.</p>';
-    openProductoVentasModal();
+    if (request !== productoHistoryRequest) return;
+    console.error('producto historial modal error', e);
+    body.textContent = `No se pudo cargar el historial: ${e.message}`;
+    Store.notice(body.textContent, true);
+  } finally {
+    if (request === productoHistoryRequest) body.removeAttribute('aria-busy');
   }
 }
 
@@ -1935,10 +1771,15 @@ function openProductoVentasModal() {
   if (!modal) return;
   modal.hidden = false;
   // Wire close buttons
-  modal.querySelectorAll('.modal-close').forEach(btn => btn.onclick = () => { modal.hidden = true; });
+  modal.querySelectorAll('.modal-close').forEach(btn => btn.onclick = () => {
+    ++productoHistoryRequest;
+    document.getElementById('productoVentasBody').removeAttribute('aria-busy');
+    modal.hidden = true;
+  });
 }
 
 async function applyFilters() {
+  if(inventoryEditMode){Store.notice("Guarde o descarte la edición antes de filtrar.");return;}
   const q = invBuscar.value.trim().toLowerCase();
   const cat = invCategoria.value;
   const smin = invStockMin.value ? parseInt(invStockMin.value, 10) : null;
@@ -1957,7 +1798,7 @@ invReiniciar.addEventListener('click', (e) => { e.preventDefault(); invBuscar.va
 // Exportar inventario a Excel (xlsx)
 invExportExcel?.addEventListener('click', async () => {
   try {
-    if (!window.XLSX) { alert('Exportador Excel no disponible.'); return; }
+    if (!(await loadVendor('xlsx'))) { alert('Exportador Excel no disponible. Revise la conexión.'); return; }
     const list = await allProducts();
     if (!list || list.length === 0) { alert('No hay datos de inventario para exportar.'); return; }
     const data = list.map(p => ({
@@ -2009,107 +1850,62 @@ const ventasFiltroLimpiar = document.getElementById('ventasFiltroLimpiar');
 const ventasVerHistoricoBtn = document.getElementById('ventasVerHistorico');
 const ventasTotalFooter = document.getElementById('ventasTotalFooter');
 let ventasMostrarHistoricoCompleto = false;
+let ventasHistoryRequest = 0;
+let ventasHistoryPage = 1;
+let ventasHistoryFilterKey = '';
+const SALES_PAGE_SIZE = 50;
 
 function getDateRange() {
-  const today = new Date();
-  const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  let desde = ventasFiltroDesde?.value ? new Date(ventasFiltroDesde.value) : null;
-  let hasta = ventasFiltroHasta?.value ? new Date(ventasFiltroHasta.value) : null;
+  const today = Store.date();
+  let desde = ventasFiltroDesde?.value || null;
+  let hasta = ventasFiltroHasta?.value || null;
   const rango = ventasFiltroRango?.value || 'todo';
   if (!desde && !hasta) {
     if (rango === 'hoy') {
-      desde = startOfDay;
-      hasta = new Date(startOfDay.getTime() + 24*60*60*1000 - 1);
+      desde = today;
+      hasta = today;
     } else if (rango === 'semana') {
-      desde = new Date(today.getTime() - 7*24*60*60*1000);
+      desde = DashboardModel.shift(today, -6);
       hasta = today;
     } else if (rango === 'mes') {
-      desde = new Date(today.getTime() - 30*24*60*60*1000);
+      desde = DashboardModel.shift(today, -29);
       hasta = today;
     }
   }
-  // Format as YYYY-MM-DD for SQL
-  const fmtDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  return {
-    desde: desde ? fmtDate(desde) : null,
-    hasta: hasta ? fmtDate(hasta) : null,
-    rango
-  };
+  if (desde && hasta && desde > hasta) throw new Error('La fecha Desde no puede ser posterior a Hasta.');
+  return { desde, hasta, rango };
 }
 
 async function refreshVentasHistorial() {
+  if(!Access.can('sales.read')) return;
   if (!ventasHistTablaBody) return;
+  const request = ++ventasHistoryRequest;
+  document.getElementById('ventasHistTabla').setAttribute('aria-busy', 'true');
   try {
     const range = getDateRange();
     const clienteQ = ventasFiltroCliente?.value?.trim();
 
-    const buildSalesQuery = () => {
-      let q = supabase.from('sales').select('*');
-      if (range.desde) q = q.gte('fecha', range.desde);
-      if (range.hasta) q = q.lte('fecha', range.hasta);
-      if (clienteQ) q = q.ilike('cliente', `%${clienteQ}%`);
-      return q;
-    };
-
-    let data = [];
-    let error = null;
-
-    if (ventasMostrarHistoricoCompleto) {
-      const pageSize = 1000;
-      let from = 0;
-      while (true) {
-        const { data: chunk, error: chunkError } = await buildSalesQuery()
-          .order('fecha', { ascending: false })
-          .order('id', { ascending: false })
-          .range(from, from + pageSize - 1);
-
-        if (chunkError) { error = chunkError; break; }
-        if (!chunk || chunk.length === 0) break;
-
-        data = data.concat(chunk);
-        if (chunk.length < pageSize) break;
-        from += pageSize;
-      }
-    } else {
-      const { data: partialData, error: partialError } = await buildSalesQuery()
-        .order('fecha', { ascending: false })
-        .order('id', { ascending: false })
-        .limit(500);
-      data = partialData || [];
-      error = partialError;
-    }
-
-    if (error) { console.error('sales fetch error', error); ventasHistTablaBody.innerHTML = `<tr><td colspan="7">Error al cargar ventas.</td></tr>`; return; }
+    if(ventasTotalFooter)ventasTotalFooter.textContent='Calculando total del periodo…';
+    const filters={...range,cliente:clienteQ};
+    const filterKey=JSON.stringify([filters,ventasMostrarHistoricoCompleto]);
+    if(filterKey!==ventasHistoryFilterKey){ventasHistoryFilterKey=filterKey;ventasHistoryPage=1;}
+    const page=await Store.salesHistory(filters,{from:ventasMostrarHistoricoCompleto?0:(ventasHistoryPage-1)*SALES_PAGE_SIZE,size:SALES_PAGE_SIZE,complete:ventasMostrarHistoricoCompleto});
+    const data=page.rows;
+    if (request !== ventasHistoryRequest) return;
+    renderSalesPagination(page.count,data.length);
     if (!data || data.length === 0) {
-      ventasHistTablaBody.innerHTML = `<tr><td colspan="7">No hay ventas para el rango seleccionado.</td></tr>`;
+      ventasHistTablaBody.innerHTML = `<tr><td colspan="8">No hay ventas para el rango seleccionado.</td></tr>`;
       if (ventasTotalFooter) ventasTotalFooter.innerHTML = '<strong>Total ventas (sin anuladas):</strong> Bs 0.00';
       return;
     }
-    // Build set of annulled sales based on movements
-    let anuladasSet = new Set();
-    try {
-      const annDetailStrings = data.map(s => `Anulación comprobante ${s.numero}`);
-      let annMovs = [];
-      const chunkSize = 100;
-      for (let i = 0; i < annDetailStrings.length; i += chunkSize) {
-        const chunk = annDetailStrings.slice(i, i + chunkSize);
-        const { data: annChunk, error: annErr } = await supabase
-          .from('movements')
-          .select('detalle')
-          .in('detalle', chunk);
-        if (!annErr && annChunk) annMovs = annMovs.concat(annChunk);
-      }
-      anuladasSet = new Set(annMovs.map(m => String(m.detalle || '').replace('Anulación comprobante ', '')));
-    } catch {}
-
     ventasHistTablaBody.innerHTML = data.map(s => {
-      const isAnuladaRow = (s.estado === 'anulada') || anuladasSet.has(String(s.numero));
+      const isAnuladaRow = s.cancelled;
       const cls = isAnuladaRow ? 'venta-anulada' : '';
       return `
       <tr class="${cls}">
         <td>${s.fecha}</td>
-        <td>${s.numero}</td>
-        <td>${s.cliente}</td>
+        <td>${escapeHtml(s.numero)}</td>
+        <td>${escapeHtml(s.cliente)}</td>
         <td>${fmt(s.subtotal)}</td>
         <td>${Number(s.descuento_pct || 0).toFixed(2)}%</td>
         <td>${fmt(s.descuento || 0)}</td>
@@ -2120,42 +1916,58 @@ async function refreshVentasHistorial() {
     // wire details buttons
     document.querySelectorAll('.btn-ver-detalles').forEach(btn => btn.addEventListener('click', onVerDetallesVenta));
 
-    // Compute totals excluding annulled using precomputed set
-    try {
-      const nonAnuladas = (data || []).filter(s => (s.estado !== 'anulada') && !anuladasSet.has(String(s.numero)));
-      const totalPeriodo = nonAnuladas.reduce((a, s) => a + (s.total || 0), 0);
-      if (ventasTotalFooter) {
-        const singleDay = range.rango === 'hoy' || (range.desde && range.hasta && range.desde === range.hasta);
-        ventasTotalFooter.innerHTML = singleDay
-          ? `<strong>Total del día (sin anuladas):</strong> ${fmt(totalPeriodo)}`
-          : `<strong>Total del periodo (sin anuladas):</strong> ${fmt(totalPeriodo)}`;
-      }
-    } catch (totErr) {
-      console.error('error computing totals', totErr);
-      if (ventasTotalFooter) ventasTotalFooter.innerHTML = '<strong>Total ventas (sin anuladas):</strong> Bs 0.00';
-    }
-  } catch (e) { console.error('ventas historial exception', e); ventasHistTablaBody.innerHTML = `<tr><td colspan="7">Error inesperado cargando ventas.</td></tr>`; }
+    const nonAnuladas = data.filter(s => !s.cancelled);
+    const totalPeriodo = nonAnuladas.reduce((a, s) => a + Number(s.total || 0), 0);
+    const showTotal=total=>{if (ventasTotalFooter && request===ventasHistoryRequest) {
+      const singleDay = range.rango === 'hoy' || (range.desde && range.hasta && range.desde === range.hasta);
+      ventasTotalFooter.innerHTML = singleDay
+        ? `<strong>Total del día (sin anuladas):</strong> ${fmt(total)}`
+        : `<strong>Total del periodo (sin anuladas):</strong> ${fmt(total)}`;
+    }};
+    if(ventasMostrarHistoricoCompleto||(ventasHistoryPage===1&&page.count===data.length))showTotal(totalPeriodo);
+    else void Store.salesHistoryTotal(filters).then(showTotal).catch(()=>{if(request===ventasHistoryRequest&&ventasTotalFooter)ventasTotalFooter.textContent='Total no disponible. Actualice la consulta.';});
+  } catch (e) {
+    if (request !== ventasHistoryRequest) return;
+    console.error('ventas historial exception', e);
+    ventasHistTablaBody.innerHTML = `<tr><td colspan="8">${escapeHtml(e.message)}</td></tr>`;
+    const pagination=document.getElementById('ventasHistPagination');if(pagination)pagination.innerHTML='';
+    if (ventasTotalFooter) ventasTotalFooter.textContent = 'Total no disponible: no se pudo confirmar la consulta.';
+    Store.notice('No se pudo cargar el historial de ventas. ' + e.message, true);
+  } finally {
+    if (request === ventasHistoryRequest) document.getElementById('ventasHistTabla').removeAttribute('aria-busy');
+  }
+}
+
+function renderSalesPagination(count,length){
+  const root=document.getElementById('ventasHistPagination');if(!root)return;
+  const more=count===null?length===SALES_PAGE_SIZE:ventasHistoryPage*SALES_PAGE_SIZE<count;
+  root.innerHTML=ventasMostrarHistoricoCompleto?`<span>${length} ventas · historial completo</span>`:`<button type="button" class="secondary" data-step="-1" ${ventasHistoryPage===1?'disabled':''}>← Anterior</button><span>Página ${ventasHistoryPage}${count===null?'':` · ${count} ventas`}</span><button type="button" class="secondary" data-step="1" ${more?'':'disabled'}>Siguiente →</button>`;
+  root.querySelectorAll('[data-step]').forEach(b=>b.addEventListener('click',()=>{ventasHistoryPage+=Number(b.dataset.step);void refreshVentasHistorial();}));
 }
 
 async function onVerDetallesVenta(e) {
   const saleId = e.currentTarget.dataset.saleId;
   try {
-    const { data: sale, error: saleErr } = await supabase.from('sales').select('*').eq('id', saleId).maybeSingle();
-    const { data, error } = await supabase.from('sales_items').select('*').eq('sale_id', saleId).order('id', { ascending: true });
-    if (saleErr || error) { alert('Error cargando detalles'); return; }
+    // Cabecera y detalle en paralelo.
+    const [{ data: sale, error: saleErr }, data] = await Promise.all([
+      supabase.from('sales').select('*').eq('id', saleId).maybeSingle(),
+      Store.all('sales_items',q=>q.eq('sale_id',saleId))
+    ]);
+    if (saleErr) throw new Error('No se pudo cargar la venta: ' + saleErr.message);
+    if (!sale) throw new Error('La venta no existe o no está disponible. Actualice el historial.');
     // Detect if already annulled via movements record
-    let isAnulada = false;
-    try {
-      const { data: ann } = await supabase.from('movements').select('id').eq('detalle', `Anulación comprobante ${sale?.numero || ''}`).limit(1);
-      isAnulada = Array.isArray(ann) && ann.length > 0;
-    } catch {}
+    let isAnulada = sale?.estado === 'anulada';
+    const { data: ann, error: annError } = await supabase.from('movements').select('id').eq('detalle', `Anulación comprobante ${sale.numero}`).limit(1);
+    if (annError) throw new Error('No se pudo confirmar el estado de la venta: ' + annError.message);
+    if (!Array.isArray(ann)) throw new Error('Respuesta inválida al confirmar el estado de la venta.');
+    isAnulada ||= ann.length > 0;
 
     const modal = document.getElementById('ventaDetallesModal');
     const body = document.getElementById('ventaDetallesBody');
-    const rows = (data||[]).map(it => `
-      <tr data-item-id="${it.id}" data-item-sku="${it.item}">
-        <td>${it.item}</td>
-        <td>${it.nombre}</td>
+    const rows = (data||[]).filter(it=>it.cantidad>0).map(it => `
+      <tr data-item-id="${it.id}" data-item-sku="${escapeHtml(it.item)}">
+        <td>${escapeHtml(it.item)}</td>
+        <td>${escapeHtml(it.nombre)}</td>
         <td class="cell-cant" style="text-align:right">${it.cantidad}</td>
         <td class="cell-precio" style="text-align:right">${fmt(it.precio)}</td>
         <td class="cell-subtotal" style="text-align:right">${fmt(it.subtotal)}</td>
@@ -2169,58 +1981,31 @@ async function onVerDetallesVenta(e) {
 
     body.innerHTML = `
       <div class="sale-meta">
-        <div><strong>N°:</strong> ${sale?.numero || '-'}</div>
+        <div><strong>N°:</strong> ${escapeHtml(sale?.numero || '-')}</div>
         <div><strong>Fecha:</strong> ${sale?.fecha || '-'}</div>
-        <div><strong>Cliente:</strong> ${sale?.cliente || '-'}</div>
+        <div><strong>Cliente:</strong> ${escapeHtml(sale?.cliente || '-')}</div>
         <div style="grid-column: 1 / -1"><strong>Estado:</strong> ${isAnulada ? '<span style="color:#991b1b;font-weight:700">ANULADA</span>' : '<span style="color:#0b3a77;font-weight:700">VIGENTE</span>'}</div>
       </div>
       <div class="table-wrap">
         <table class="table">
           <thead>
-            <tr><th>ITEM</th><th>Nombre</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr>
+            <tr><th>ITEM</th><th>Nombre</th><th>Cant.</th><th>Precio</th><th>Subtotal</th><th>Acciones</th></tr>
           </thead>
           <tbody>${rows || '<tr><td colspan="5">Sin items</td></tr>'}</tbody>
         </table>
       </div>
-      <div class="sale-totals">
+      <div class="sale-totals"><div class="sale-totals-values">
         <div>Subtotal: ${fmt(subtotal)}</div>
         <div>Descuento: ${Number(descuentoPct).toFixed(2)}% (${fmt(descuentoBs)})</div>
         <div>Total: ${fmt(total)}</div>
-      </div>
+      </div></div>
     `;
     // open modal
     modal.hidden = false;
     const closes = modal.querySelectorAll('.modal-close');
     closes.forEach(btn => btn.onclick = () => { modal.hidden = true; });
-    // center and enable dragging
-    const card = modal.querySelector('.modal-card');
-    const header = modal.querySelector('.modal-header');
-    card.style.left = '50%';
-    card.style.top = '50%';
-    card.style.transform = 'translate(-50%, -50%)';
-    let isDragging = false;
-    let offsetX = 0, offsetY = 0;
-    function onMouseMove(ev) {
-      if (!isDragging) return;
-      card.style.left = `${ev.clientX - offsetX}px`;
-      card.style.top = `${ev.clientY - offsetY}px`;
-      card.style.transform = 'none';
-    }
-    function onMouseUp() {
-      if (!isDragging) return;
-      isDragging = false;
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    }
-    header.onmousedown = (ev) => {
-      const rect = card.getBoundingClientRect();
-      isDragging = true;
-      offsetX = ev.clientX - rect.left;
-      offsetY = ev.clientY - rect.top;
-      document.addEventListener('mousemove', onMouseMove);
-      document.addEventListener('mouseup', onMouseUp);
-      ev.preventDefault();
-    };
+
+
     // actions
     const reimpBtn = document.getElementById('ventaDetallesReimprimir');
     const pdfBtn = document.getElementById('ventaDetallesPDF');
@@ -2267,10 +2052,10 @@ async function onVerDetallesVenta(e) {
         subtotalLive += subNum;
       });
       const descPctInput = document.getElementById('editDescPct');
-      const descPct = descPctInput ? (parseFloat(descPctInput.value || '0') || 0) : (sale?.descuento_pct || 0);
-      const descuentoBs = subtotalLive * (descPct/100);
+      const descPct = Store.money(descPctInput ? (parseFloat(descPctInput.value || '0') || 0) : (sale?.descuento_pct || 0));
+      const descuentoBs = Store.money(subtotalLive * (descPct/100));
       const totalLive = subtotalLive - descuentoBs;
-      const totalsEl = body.querySelector('.sale-totals');
+      const totalsEl = body.querySelector('.sale-totals-values');
       if (totalsEl) {
         totalsEl.innerHTML = `
           <div>Subtotal: ${fmt(subtotalLive)}</div>
@@ -2343,121 +2128,28 @@ async function onVerDetallesVenta(e) {
       saveBtn.disabled = true; cancelBtn.hidden = true;
       if (refresh) onVerDetallesVenta({ currentTarget: { dataset: { saleId } } });
     }
-    editBtn.onclick = () => enterEditMode();
+    editBtn.hidden=!Access.can('sales.edit'); anularBtn.hidden=!Access.can('sales.cancel');
+    editBtn.onclick = () => { Access.require('sales.edit'); enterEditMode(); };
     cancelBtn.onclick = () => exitEditMode(true);
 
-    saveBtn.onclick = async () => {
-      if (!isEditing || ventaEditSaveInProgress) return;
-      ventaEditSaveInProgress = true;
-      saveBtn.disabled = true;
-      try {
-        // Collect edits
-        const tbody = body.querySelector('tbody');
-        const rows = Array.from(tbody.querySelectorAll('tr'));
-        const edits = rows.filter(tr => !tr.classList.contains('row-new') && tr.dataset.itemId).map(tr => {
-          const id = tr.dataset.itemId;
-          const sku = tr.dataset.itemSku;
-          const old = data.find(d => String(d.id) === String(id));
-          const newCant = parseInt(tr.querySelector('.edit-cant')?.value || String(old.cantidad || 0), 10);
-          const newPrecio = parseFloat(tr.querySelector('.edit-precio')?.value || String(old.precio || 0));
-          return { id, sku, oldCant: old.cantidad || 0, newCant, oldPrecio: old.precio || 0, newPrecio };
-        });
-        const removedIds = rows.filter(tr => tr.dataset.itemId && tr.dataset.removed === '1').map(tr => tr.dataset.itemId);
-        const newRows = rows.filter(tr => tr.classList.contains('row-new'));
-        // Validate inventory deltas
-        const products = await allProducts();
-        const byItem = new Map(products.map(p => [normalizeItemKey(p.item), p]));
-        const stockDeltas = new Map();
+    saveBtn.onclick = () => Store.run('edit-sale',saveBtn,async () => {
+      const activeRows=[...body.querySelectorAll('tbody tr')].filter(tr=>tr.dataset.removed!=='1');
+      const products=await productsFor(activeRows.map(tr=>data.find(i=>String(i.id)===tr.dataset.itemId)?.item||tr.querySelector('.edit-sku')?.value));
+      const items=activeRows.map(tr=>{
+        const original=data.find(i=>String(i.id)===tr.dataset.itemId);
+        const sku=original?.item||tr.querySelector('.edit-sku')?.value.trim();
+        const p=resolveProductFromList(products,sku);
+        if(!p) throw new Error('Producto no encontrado: '+sku);
+        return {product_id:p.id,...(original?{line_id:original.id}:{}),cantidad:Store.number(tr.querySelector('.edit-cant').value,'Cantidad',{integer:true,min:1}),precio:Store.money(Store.number(tr.querySelector('.edit-precio').value,'Precio'))};
+      });
+      if(!items.length) throw new Error('Use Anular venta para retirar todos los productos.');
+      const descuento_pct=Store.money(Store.number(document.getElementById('editDescPct')?.value||0,'Descuento',{max:100}));
+      await Store.commit('sale_edit',{sale_id:sale.id,expected_sale:sale,expected_items:data,descuento_pct,items},'edit-'+sale.id);
+      modal.hidden=true; Store.notice('Venta actualizada correctamente.');
+      refreshAfterWrite();
+    });
 
-        const addDelta = (item, delta) => {
-          const key = normalizeItemKey(item);
-          stockDeltas.set(key, Number(stockDeltas.get(key) || 0) + Number(delta || 0));
-        };
 
-        for (const ed of edits) {
-          const p = byItem.get(normalizeItemKey(ed.sku));
-          if (!p) { alert(`Producto no encontrado: ${ed.sku}`); return; }
-          const delta = ed.newCant - ed.oldCant;
-          addDelta(ed.sku, -delta);
-        }
-        for (const tr of newRows) {
-          const sku = tr.querySelector('.edit-sku')?.value.trim();
-          const cant = parseInt(tr.querySelector('.edit-cant')?.value || '0', 10);
-          const precio = parseFloat(tr.querySelector('.edit-precio')?.value || '0');
-          if (!sku || cant <= 0 || precio < 0) { alert('Complete SKU, cantidad y precio en el nuevo ítem'); return; }
-          const p = byItem.get(normalizeItemKey(sku));
-          if (!p) { alert(`Producto no encontrado: ${sku}`); return; }
-          addDelta(sku, -cant);
-        }
-        for (const rid of removedIds) {
-          const old = data.find(d => String(d.id) === String(rid));
-          if (old?.item) addDelta(old.item, (old.cantidad || 0));
-        }
-
-        // Validate against fresh stock snapshot before mutating.
-        for (const [itemKey, cejaDelta] of stockDeltas.entries()) {
-          const p = byItem.get(itemKey);
-          if (!p) continue;
-          const nextCeja = Number(p.ceja || 0) + Number(cejaDelta || 0);
-          if (nextCeja < 0) {
-            alert(`CEJA insuficiente para ${p.item}. Disponible: ${p.ceja}, variación requerida: ${cejaDelta}`);
-            return;
-          }
-        }
-
-        const applied = [];
-        // Apply inventory updates and persist sales_items
-        for (const [itemKey, cejaDelta] of stockDeltas.entries()) {
-          if (!cejaDelta) continue;
-          const p = byItem.get(itemKey);
-          if (!p) continue;
-          const res = await applyStockDeltaAtomicById(p.id, cejaDelta, 0, { minCeja: 0 });
-          if (!res.ok) throw new Error(`No se pudo actualizar stock para ${p.item}.`);
-          applied.push({ productId: p.id, ceja: -cejaDelta });
-        }
-
-        for (const ed of edits) {
-          await supabase.from('sales_items').update({ cantidad: ed.newCant, precio: ed.newPrecio, subtotal: ed.newCant * ed.newPrecio }).eq('id', ed.id);
-        }
-        // Removed rows: inventory rollback and delete
-        for (const rid of removedIds) {
-          await supabase.from('sales_items').delete().eq('id', rid);
-        }
-        // New rows: inventory apply and insert
-        for (const tr of newRows) {
-          const sku = tr.querySelector('.edit-sku')?.value.trim();
-          const cant = parseInt(tr.querySelector('.edit-cant')?.value || '0', 10);
-          const precio = parseFloat(tr.querySelector('.edit-precio')?.value || '0');
-          const p = byItem.get(normalizeItemKey(sku));
-          await supabase.from('sales_items').insert({ sale_id: saleId, item: p.item, nombre: p.nombre, cantidad: cant, precio, subtotal: cant * precio });
-        }
-        // Recompute totals and update sale
-        const { data: newItems } = await supabase.from('sales_items').select('*').eq('sale_id', saleId);
-        const newSubtotal = (newItems || []).reduce((a,i)=>a+(i.subtotal||0),0);
-        const descPctInput = document.getElementById('editDescPct');
-        const descPct = descPctInput ? (parseFloat(descPctInput.value || '0') || 0) : (sale?.descuento_pct || 0);
-        const newDescuento = newSubtotal * (descPct/100);
-        const newTotal = newSubtotal - newDescuento;
-        await supabase.from('sales').update({ subtotal: newSubtotal, descuento: newDescuento, descuento_pct: descPct, total: newTotal }).eq('id', saleId);
-        // Log adjustment movement
-        const totalDelta = (newTotal - (sale?.total || 0));
-        const qtyDelta = edits.reduce((a,ed)=>a + (ed.newCant - ed.oldCant), 0);
-        const addQty = newRows.reduce((a,tr)=>a + (parseInt(tr.querySelector('.edit-cant')?.value || '0', 10) || 0), 0);
-        const remQty = removedIds.reduce((a,rid)=>{ const old = data.find(d => String(d.id)===String(rid)); return a + (old?.cantidad || 0); }, 0);
-        const totalQtyDelta = qtyDelta + addQty - remQty;
-        await addMovement({ tipo: 'venta', fecha: sale.fecha, item: '-', nombre: sale.cliente + ' (AJUSTE)', cantidad: totalQtyDelta, detalle: `Ajuste comprobante ${sale.numero}`, total: totalDelta, descuento: 0 });
-        alert('Cambios guardados. Inventario y comprobante actualizados.');
-        exitEditMode(true);
-        await refreshInventoryUI();
-        await refreshVentasHistorial();
-      } catch (err) {
-        console.error('guardar edicion error', err);
-        alert('No se pudieron guardar los cambios.');
-      } finally {
-        ventaEditSaveInProgress = false;
-        saveBtn.disabled = !isEditing;
-      }
-    };
 
     // Add item flow (edit mode only)
     addItemBtn.onclick = async () => {
@@ -2488,61 +2180,38 @@ async function onVerDetallesVenta(e) {
     };
     reimpBtn.onclick = async () => {
       try {
-        const mov = { comprobante: { numero: sale.numero, fecha: sale.fecha, entidad: sale.cliente }, items: data.map(di => ({ item: di.item, nombre: di.nombre, cantidad: di.cantidad, precioVenta: di.precio })), total: total };
+        const mov = { comprobante: { numero: sale.numero, fecha: sale.fecha, entidad: sale.cliente }, items: data.filter(di=>di.cantidad>0).map(di => ({ item: di.item, nombre: di.nombre, cantidad: di.cantidad, precioVenta: di.precio })), total: total, subtotal: sale.subtotal, descuento: sale.descuento };
         setLastComprobante('venta', mov);
         await descargarComprobantePDF('venta', { autoPrint: true });
       } catch (e) { console.error('reimprimir error', e); alert('No se pudo reimprimir.'); }
     };
     pdfBtn.onclick = async () => {
       try {
-        const mov = { comprobante: { numero: sale.numero, fecha: sale.fecha, entidad: sale.cliente }, items: data.map(di => ({ item: di.item, nombre: di.nombre, cantidad: di.cantidad, precioVenta: di.precio })), total: total };
+        const mov = { comprobante: { numero: sale.numero, fecha: sale.fecha, entidad: sale.cliente }, items: data.filter(di=>di.cantidad>0).map(di => ({ item: di.item, nombre: di.nombre, cantidad: di.cantidad, precioVenta: di.precio })), total: total, subtotal: sale.subtotal, descuento: sale.descuento };
         setLastComprobante('venta', mov);
         await descargarComprobantePDF('venta');
       } catch (e) { console.error('pdf error', e); alert('No se pudo generar el PDF.'); }
     };
-    anularBtn.onclick = async () => {
-      if (!confirm('¿Seguro que desea anular esta venta? Se revertirá el stock.')) return;
-      if (ventaEditSaveInProgress) return;
-      ventaEditSaveInProgress = true;
-      anularBtn.disabled = true;
-      try {
-        const products = await allProducts();
-        const byItem = new Map(products.map(p => [normalizeItemKey(p.item), p]));
-        for (const it of data) {
-          const p = byItem.get(normalizeItemKey(it.item));
-          if (p) {
-            const res = await applyStockDeltaAtomicById(p.id, (it.cantidad || 0), 0, { minCeja: 0 });
-            if (!res.ok) throw new Error(`No se pudo revertir stock para ${p.item}.`);
-          }
-        }
-        try {
-          const { error: stErr } = await supabase.from('sales').update({ estado: 'anulada' }).eq('id', saleId);
-          if (stErr) throw stErr;
-        } catch {
-          // Fallback marker when schema does not include estado.
-          try {
-            await supabase.from('sales').update({ cliente: `${sale.cliente} (ANULADA)` }).eq('id', saleId);
-          } catch {}
-        }
-        await addMovement({ tipo: 'venta', fecha: sale.fecha, item: '-', nombre: sale.cliente + ' (ANULADA)', cantidad: data.reduce((a,i)=>a+(i.cantidad||0),0), detalle: `Anulación comprobante ${sale.numero}`, total: 0, descuento: 0 });
-        modal.hidden = true;
-        await refreshInventoryUI();
-        await refreshVentasHistorial();
-        alert('Venta anulada y stock revertido.');
-      } catch (e) { console.error('anular error', e); alert('No se pudo anular la venta.'); }
-      finally {
-        ventaEditSaveInProgress = false;
-        if (!isAnulada && !modal.hidden) anularBtn.disabled = false;
-      }
+    anularBtn.onclick = () => {
+      return Store.run('cancel-sale',anularBtn,async () => {
+        const reason=await Experience.requestReason('Anular venta '+sale.numero,'Se devolverán los productos a CEJA. El comprobante se conservará y la anulación quedará registrada con tu cuenta.');
+        if(reason===null)return;
+        await Store.commit('sale_cancel',{reason,sale_id:sale.id,expected_sale:sale,expected_items:data},'cancel-'+sale.id);
+        modal.hidden=true; Store.notice('Venta anulada. Stock devuelto una sola vez.');
+        refreshAfterWrite();
+      });
     };
+
+
     // backdrop and esc
     modal.onclick = (ev) => { if (ev.target === modal) modal.hidden = true; };
     document.addEventListener('keydown', function escClose(ev){ if (ev.key==='Escape'){ modal.hidden=true; document.removeEventListener('keydown', escClose); } });
-  } catch (err) { console.error('ver detalles error', err); }
+  } catch (err) { console.error('ver detalles error', err); Store.notice(err.message, true); }
 }
 
-ventasFiltroAplicar?.addEventListener('click', async () => { await refreshVentasHistorial(); });
+ventasFiltroAplicar?.addEventListener('click', async () => { ventasHistoryPage=1;await refreshVentasHistorial(); });
 ventasFiltroLimpiar?.addEventListener('click', async () => {
+  ventasHistoryPage=1;
   if (ventasFiltroRango) ventasFiltroRango.value = 'todo';
   if (ventasFiltroDesde) ventasFiltroDesde.value = '';
   if (ventasFiltroHasta) ventasFiltroHasta.value = '';
@@ -2550,257 +2219,19 @@ ventasFiltroLimpiar?.addEventListener('click', async () => {
   await refreshVentasHistorial();
 });
 ventasVerHistoricoBtn?.addEventListener('click', async () => {
+  ventasHistoryPage=1;
   ventasMostrarHistoricoCompleto = !ventasMostrarHistoricoCompleto;
   ventasVerHistoricoBtn.textContent = ventasMostrarHistoricoCompleto ? 'Volver a vista resumida' : 'Ver historico completo';
   await refreshVentasHistorial();
 });
 
-async function onDeleteProduct(e) {
-  const tr = e.target.closest('tr');
-  const item = tr.dataset.item;
-  if (!confirm(`¿Eliminar producto ${item}?`)) return;
-  const { error } = await supabase.from('products').delete().eq('item', item);
-  if (error) console.error(error);
-  await refreshInventoryUI();
-}
+async function onDeleteProduct() { alert('Los productos se conservan para proteger el historial. Puede editar su información desde Modo edición.'); }
 
-// Admin: roles y accesos
-async function getRolesData() {
-  const { data } = await supabase.from('roles_matrix').select('data_json').limit(1).maybeSingle();
-  return data?.data_json || { roles: [], modules: [], matrix: {} };
-}
-async function saveRolesData(d) { await supabase.from('roles_matrix').update({ data_json: d }).neq('id', 0); }
 
-async function renderAdminMatrix() {
-  const d = await getRolesData();
-  const thead = adminTabla.querySelector('thead');
-  const tbody = adminTabla.querySelector('tbody');
-  thead.innerHTML = `<tr><th>Módulo</th>${d.roles.map(r => `<th>${r}</th>`).join('')}</tr>`;
-  tbody.innerHTML = d.modules.map(m => {
-    const cells = d.roles.map(r => {
-      const checked = d.matrix[r]?.[m] ? 'checked' : '';
-      return `<td><input type="checkbox" data-role="${r}" data-mod="${m}" ${checked}></td>`;
-    }).join('');
-    return `<tr><td>${m}</td>${cells}</tr>`;
-  }).join('');
-}
+async function renderAdminMatrix() { return Access.renderAdmin(); }
 
-adminAgregarRol.addEventListener('click', async () => {
-  const name = adminNuevoRol.value.trim();
-  if (!name) { alert('Ingrese nombre de rol'); return; }
-  const d = await getRolesData();
-  if (d.roles.includes(name)) { alert('El rol ya existe'); return; }
-  d.roles.push(name);
-  d.matrix[name] = {};
-  d.modules.forEach(m => d.matrix[name][m] = true);
-  await saveRolesData(d);
-  adminNuevoRol.value = '';
-  renderAdminMatrix();
-});
-
-adminGuardar.addEventListener('click', async () => {
-  const d = await getRolesData();
-  adminTabla.querySelectorAll('input[type="checkbox"]').forEach(chk => {
-    const r = chk.dataset.role; const m = chk.dataset.mod;
-    d.matrix[r][m] = chk.checked;
-  });
-  await saveRolesData(d);
-  alert('Matriz de roles guardada');
-});
-
-// Dashboard
-let chartStockPorCategoria, chartMovimientos, chartTopProductos,
-    chartValorInventarioPorCategoria, chartDepositosPorCategoria,
-    chartDescuentoPorDia, chartVentasAcumuladas;
-async function refreshDashboard() {
-  const products = await allProducts();
-  const movements = await allMovements();
-  // Try to load sales for discount chart
-  let sales = [];
-  try {
-    const today = new Date();
-    const desde = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()-30).padStart(2,'0')}`; // approx last 30 days
-    const { data } = await supabase.from('sales').select('*').order('fecha', { ascending: true }).limit(1000);
-    sales = data || [];
-  } catch {}
-  // Stock por categoría
-  const byCat = {};
-  const byCatValue = {};
-  const byCatCeja = {};
-  const byCatSenkata = {};
-  products.forEach(p => {
-    const c = p.categoria || 'General';
-    const stock = ((p.ceja||0)+(p.senkata||0));
-    byCat[c] = (byCat[c] || 0) + stock;
-    byCatValue[c] = (byCatValue[c] || 0) + stock * (p.precio || 0);
-    byCatCeja[c] = (byCatCeja[c] || 0) + (p.ceja || 0);
-    byCatSenkata[c] = (byCatSenkata[c] || 0) + (p.senkata || 0);
-  });
-  const catLabels = Object.keys(byCat);
-  const catData = Object.values(byCat);
-  const catValueData = catLabels.map(c => byCatValue[c] || 0);
-  const catCejaData = catLabels.map(c => byCatCeja[c] || 0);
-  const catSenkData = catLabels.map(c => byCatSenkata[c] || 0);
-  // Movimientos por día
-  const byDay = {};
-  movements.forEach(m => {
-    const d = m.fecha;
-    if (!byDay[d]) byDay[d] = { ingreso: 0, venta: 0 };
-    if (m.tipo === 'ingreso') byDay[d].ingreso += m.total; else if (m.tipo === 'venta') byDay[d].venta += m.total;
-  });
-  const dayLabels = Object.keys(byDay).sort();
-  const dayIng = dayLabels.map(d => byDay[d].ingreso);
-  const dayVen = dayLabels.map(d => byDay[d].venta);
-  const dayVenCumulative = dayVen.reduce((acc, v, i) => { acc.push((acc[i-1] || 0) + v); return acc; }, []);
-  // Top productos por stock
-  const top = [...products].sort((a,b) => (((b.ceja||0)+(b.senkata||0))-(((a.ceja||0)+(a.senkata||0))))).slice(0,10);
-  const topLabels = top.map(p => p.nombre);
-  const topData = top.map(p => ((p.ceja||0)+(p.senkata||0)));
-
-  // Render charts
-  const c1 = document.getElementById('chartStockPorCategoria').getContext('2d');
-  const c2 = document.getElementById('chartMovimientos').getContext('2d');
-  const c3 = document.getElementById('chartTopProductos').getContext('2d');
-  const c4 = document.getElementById('chartValorInventarioPorCategoria').getContext('2d');
-  const c5 = document.getElementById('chartDepositosPorCategoria').getContext('2d');
-  const c6 = document.getElementById('chartDescuentoPorDia')?.getContext('2d');
-  const c7 = document.getElementById('chartVentasAcumuladas').getContext('2d');
-  if (chartStockPorCategoria) chartStockPorCategoria.destroy();
-  if (chartMovimientos) chartMovimientos.destroy();
-  if (chartTopProductos) chartTopProductos.destroy();
-  if (chartValorInventarioPorCategoria) chartValorInventarioPorCategoria.destroy();
-  if (chartDepositosPorCategoria) chartDepositosPorCategoria.destroy();
-  if (chartDescuentoPorDia) chartDescuentoPorDia.destroy();
-  if (chartVentasAcumuladas) chartVentasAcumuladas.destroy();
-  chartStockPorCategoria = new Chart(c1, {
-    type: 'bar', data: { labels: catLabels, datasets: [{ label: 'Stock', data: catData, backgroundColor: '#0a6cff' }] }, options: { responsive: true }
-  });
-  chartMovimientos = new Chart(c2, {
-    type: 'line', data: { labels: dayLabels, datasets: [
-      { label: 'Ingresos', data: dayIng, borderColor: '#0a6cff', backgroundColor: 'rgba(10,108,255,0.15)', tension: 0.3 },
-      { label: 'Ventas', data: dayVen, borderColor: '#06f', backgroundColor: 'rgba(0,102,255,0.15)', tension: 0.3 }
-    ] }, options: { responsive: true }
-  });
-  chartTopProductos = new Chart(c3, {
-    type: 'pie', data: { labels: topLabels, datasets: [{ data: topData, backgroundColor: ['#0a6cff','#3b82f6','#7aa7e1','#0f63d6','#eef5ff','#dbe7ff','#93c5fd','#60a5fa','#2563eb','#1d4ed8'] }] }, options: { responsive: true }
-  });
-  chartValorInventarioPorCategoria = new Chart(c4, {
-    type: 'bar', data: { labels: catLabels, datasets: [{ label: 'Valor Inventario (Bs)', data: catValueData, backgroundColor: '#2563eb' }] }, options: { responsive: true, scales: { y: { beginAtZero: true } } }
-  });
-  chartDepositosPorCategoria = new Chart(c5, {
-    type: 'bar', data: { labels: catLabels, datasets: [
-      { label: 'CEJA', data: catCejaData, backgroundColor: '#60a5fa' },
-      { label: 'SENKATA', data: catSenkData, backgroundColor: '#93c5fd' }
-    ] }, options: { responsive: true, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
-  });
-  // Descuento promedio por día (si hay tabla sales)
-  const cardDesc = document.getElementById('cardDescuentoPorDia');
-  if (c6 && sales && sales.length) {
-    const byDayDesc = {};
-    sales.forEach(s => {
-      const d = s.fecha;
-      if (!byDayDesc[d]) byDayDesc[d] = { sum: 0, count: 0 };
-      byDayDesc[d].sum += (s.descuento_pct || 0);
-      byDayDesc[d].count += 1;
-    });
-    const descLabels = Object.keys(byDayDesc).sort();
-    const descAvg = descLabels.map(d => byDayDesc[d].count ? (byDayDesc[d].sum / byDayDesc[d].count) : 0);
-    chartDescuentoPorDia = new Chart(c6, {
-      type: 'line', data: { labels: descLabels, datasets: [ { label: 'Descuento promedio (%)', data: descAvg, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.15)', tension: 0.3 } ] }, options: { responsive: true }
-    });
-    if (cardDesc) cardDesc.hidden = false;
-  } else {
-    if (cardDesc) cardDesc.hidden = true;
-  }
-  chartVentasAcumuladas = new Chart(c7, {
-    type: 'line', data: { labels: dayLabels, datasets: [ { label: 'Ventas acumuladas', data: dayVenCumulative, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.15)', tension: 0.3 } ] }, options: { responsive: true }
-  });
-
-  // KPIs
-  const kpiTotalProductos = document.getElementById('kpiTotalProductos');
-  const kpiStockTotal = document.getElementById('kpiStockTotal');
-  const kpiValorInventario = document.getElementById('kpiValorInventario');
-  const kpiVentasHoy = document.getElementById('kpiVentasHoy');
-  const kpiIngresosHoy = document.getElementById('kpiIngresosHoy');
-  const totalProductos = products.length;
-  const totalStock = products.reduce((a,p)=>a+((p.ceja||0)+(p.senkata||0)),0);
-  const valorInventario = products.reduce((a,p)=>a+(((p.ceja||0)+(p.senkata||0))*(p.precio||0)),0);
-  const todayStr = new Date().toISOString().slice(0,10);
-  const ventasHoy = movements.filter(m => m.tipo==='venta' && String(m.fecha)===todayStr).reduce((a,m)=>a+(m.total||0),0);
-  const ingresosHoy = movements.filter(m => m.tipo==='ingreso' && String(m.fecha)===todayStr).reduce((a,m)=>a+(m.total||0),0);
-  if (kpiTotalProductos) kpiTotalProductos.textContent = String(totalProductos);
-  if (kpiStockTotal) kpiStockTotal.textContent = String(totalStock);
-  if (kpiValorInventario) kpiValorInventario.textContent = fmt(valorInventario);
-  if (kpiVentasHoy) kpiVentasHoy.textContent = fmt(ventasHoy);
-  if (kpiIngresosHoy) kpiIngresosHoy.textContent = fmt(ingresosHoy);
-
-  // Reabastecimiento sugerido (predicción simple)
-  try {
-    const tbody = document.getElementById('reabastTabla')?.querySelector('tbody');
-    const card = document.getElementById('cardReabastecimiento');
-    if (tbody) {
-      // Ventana de 30 días
-      const today = new Date();
-      const since = new Date(today.getTime() - 30*24*60*60*1000);
-      const fmtDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-      const { data: recentSales, error: salesErr } = await supabase.from('sales').select('id,fecha').gte('fecha', fmtDate(since)).lte('fecha', fmtDate(today)).order('fecha', { ascending: false }).limit(5000);
-      if (salesErr || !recentSales || !recentSales.length) { tbody.innerHTML = '<tr><td colspan="6">Sin datos suficientes de ventas recientes.</td></tr>'; if (card) card.hidden = false; return; }
-      const saleIds = recentSales.map(s => s.id);
-      // Fetch sales_items in chunks
-      let itemsRows = [];
-      const chunkSize = 200;
-      for (let i = 0; i < saleIds.length; i += chunkSize) {
-        const chunk = saleIds.slice(i, i + chunkSize);
-        const { data: siChunk, error: siErr } = await supabase.from('sales_items').select('sale_id,item,cantidad').in('sale_id', chunk);
-        if (!siErr && siChunk) itemsRows = itemsRows.concat(siChunk);
-      }
-      if (!itemsRows.length) { tbody.innerHTML = '<tr><td colspan="6">No hay ventas por producto registradas en el período.</td></tr>'; if (card) card.hidden = false; return; }
-      // Sum quantities per item
-      const qtyByItem = {};
-      itemsRows.forEach(r => { qtyByItem[r.item] = (qtyByItem[r.item] || 0) + (r.cantidad || 0); });
-      const daysWindow = 30;
-      // Build predictions
-      const prodMap = new Map(products.map(p => [p.item, p]));
-      const preds = Object.keys(qtyByItem).map(item => {
-        const p = prodMap.get(item);
-        if (!p) return null;
-        const avgPerDay = qtyByItem[item] / daysWindow;
-        const stock = (p.ceja || 0) + (p.senkata || 0);
-        const daysLeft = avgPerDay > 0 ? (stock / avgPerDay) : Infinity;
-        const coverageDays = getSettings().coverageDays || 14;
-        const suggested = avgPerDay > 0 ? Math.max(0, Math.ceil(avgPerDay * coverageDays - stock)) : 0; // cobertura configurable
-        return { item, nombre: p.nombre, stock, avgPerDay, daysLeft, suggested };
-      }).filter(Boolean)
-        .filter(x => x.avgPerDay > 0)
-        .sort((a,b) => a.daysLeft - b.daysLeft);
-
-      // Show only those under threshold (<= 7 días restantes)
-      const alerts = preds.filter(x => x.daysLeft <= 7);
-      if (!alerts.length) { tbody.innerHTML = '<tr><td colspan="6">Sin alertas. Stock con cobertura suficiente.</td></tr>'; if (card) card.hidden = false; return; }
-      tbody.innerHTML = alerts.map(a => {
-        const cls = a.daysLeft <= 2 ? 'stock-critico' : 'stock-alerta';
-        const badgeCls = a.daysLeft <= 2 ? 'badge badge-critical' : (a.daysLeft <= 7 ? 'badge badge-alert' : 'badge badge-ok');
-        const agotStr = a.daysLeft === Infinity ? '-' : `${a.daysLeft.toFixed(1)} días`;
-        return `
-          <tr class="${cls}">
-            <td>${a.item}</td>
-            <td>${a.nombre}</td>
-            <td>${a.stock}</td>
-            <td>${a.avgPerDay.toFixed(2)}</td>
-            <td><span class="${badgeCls}">${agotStr}</span></td>
-            <td>${a.suggested}</td>
-            <td><button type="button" class="secondary btn-ver-ventas-prod" data-item="${a.item}">Ver ventas</button></td>
-          </tr>`;
-      }).join('');
-      // Wire product sales quick view
-      tbody.querySelectorAll('.btn-ver-ventas-prod').forEach(btn => btn.addEventListener('click', (ev) => {
-        const item = ev.currentTarget.dataset.item;
-        showProductoVentasModal(item);
-      }));
-      if (card) card.hidden = false;
-    }
-  } catch (e) { console.warn('reabastecimiento panel warn', e); }
-}
+// Dashboard de solo lectura
+async function refreshDashboard() { if(Access.can('dashboard.read')) return Dashboard.refresh(); }
 
 // Movimientos UI
 const formMov = document.getElementById('formMov');
@@ -2816,6 +2247,8 @@ let movHistPage = 1;
 const MOV_HIST_PER_PAGE = 20;
 let movHistFilteredData = [];
 let movHistMostrarCompleto = false;
+let movHistoryRequest = 0;
+let movHistoryCursors = [null],movHistoryMore=false,movHistoryFilterKey='';
 
 function renumberMovRows() {
   if (!movItemsTbody) return;
@@ -2840,23 +2273,25 @@ function newMovRow() {
   const senkCell = tr.querySelector('.mov-senk-cell');
   const cantInput = tr.querySelector('.mov-cant');
   const removeBtn = tr.querySelector('.remove');
+  let productLookup = 0;
 
   async function resolveProduct() {
+    const lookup = ++productLookup;
     const val = (itemInput.value || '').trim();
     if (!val) { nombreCell.textContent = '-'; senkCell.textContent = '-'; senkCell.className = 'mov-senk-cell'; cantInput.value = ''; cantInput.removeAttribute('max'); tr.dataset.item = ''; return; }
     let p = await findProductByITEM(val);
     if (!p) {
-      const all = await allProducts();
+      const all = await Store.catalog();
       const byName = all.filter(x => (x.nombre || '').toLowerCase() === val.toLowerCase());
       if (byName.length === 1) p = byName[0];
     }
+    if (lookup !== productLookup || val !== itemInput.value.trim()) return;
     if (p) {
       tr.dataset.item = p.item;
       nombreCell.textContent = p.nombre || '';
       const senk = p.senkata || 0;
       senkCell.textContent = String(senk);
       senkCell.className = 'mov-senk-cell ' + (senk <= 5 ? 'senk-low' : 'senk-ok');
-      cantInput.value = '';
       cantInput.setAttribute('max', String(senk));
     } else {
       tr.dataset.item = '';
@@ -2869,7 +2304,11 @@ function newMovRow() {
   }
   itemInput.addEventListener('change', resolveProduct);
   itemInput.addEventListener('blur', resolveProduct);
-  itemInput.addEventListener('input', () => { nombreCell.textContent = '-'; senkCell.textContent = '-'; senkCell.className = 'mov-senk-cell'; tr.dataset.item=''; });
+  itemInput.addEventListener('input', () => {
+    ++productLookup;
+    nombreCell.textContent = '-'; senkCell.textContent = '-'; senkCell.className = 'mov-senk-cell'; tr.dataset.item='';
+    cantInput.value = ''; cantInput.removeAttribute('max');
+  });
   cantInput.addEventListener('input', () => {
     const max = parseInt(cantInput.getAttribute('max') || '0', 10);
     let v = parseInt(cantInput.value || '0', 10);
@@ -2887,9 +2326,12 @@ function newMovRow() {
 }
 
 async function refreshMovDatalist() {
-  const list = await allProducts();
+  if(!Access.can('inventory.read')) return;
+  const list = await Store.catalog();
   const dl = document.getElementById('datalistMovItems');
-  dl.innerHTML = list.map(p => `<option value="${p.item}">${p.nombre}</option>`).join('');
+  const options=list.map(p => `<option value="${escapeHtml(p.item)}">${escapeHtml(p.nombre)}</option>`).join('');
+  dl.innerHTML=options;
+  const saleList=document.getElementById('datalistProductos');if(saleList)saleList.innerHTML=options;
 }
 
 function createMovementBatchId() {
@@ -2992,32 +2434,32 @@ function renderRecentMovimientos(groups) {
   }).join('');
 }
 
+async function refreshRecentMovimientos(){
+  if(!Access.can('movements.read'))return;
+  try{const page=await Store.transferHistory({days:5});renderRecentMovimientos(buildGroupedTransfers(normalizeTransfers(page.rows)));}
+  catch(e){if(movRecentList)movRecentList.textContent='No se pudieron cargar los movimientos recientes.';Store.notice(e.message,true);}
+}
+function normalizeTransfers(rows){return rows.map(m=>String(m.detalle).startsWith('Reversión movimiento ')?{...m,cantidad:-Math.abs(m.cantidad)}:m);}
 async function refreshMovimientosTable(filterDesde, filterHasta, filterItem) {
-  const data = await allMovements({ includeAll: movHistMostrarCompleto });
-  if (!movTablaBody) return;
-  const allGroups = buildGroupedTransfers(data);
-  renderRecentMovimientos(allGroups);
-  const filteredGroups = buildGroupedTransfers(data, filterDesde, filterHasta, filterItem);
-  movHistFilteredData = filteredGroups;
-
-  if (!filteredGroups.length) {
-    movTablaBody.innerHTML = `<tr><td colspan="6">
-      <div class="mov-empty-state">
-        <div class="mov-empty-icon">📦</div>
-        <p><strong>No hay movimientos</strong></p>
-        <p>Los movimientos SENKATA → CEJA aparecerán aquí</p>
-      </div>
-    </td></tr>`;
-    renderMovHistPagination();
-    return;
-  }
-
-  const totalPages = Math.ceil(filteredGroups.length / MOV_HIST_PER_PAGE);
-  if (movHistPage > totalPages) movHistPage = totalPages;
-  if (movHistPage < 1) movHistPage = 1;
-  const pageItems = movHistMostrarCompleto
-    ? filteredGroups
-    : filteredGroups.slice((movHistPage - 1) * MOV_HIST_PER_PAGE, (movHistPage - 1) * MOV_HIST_PER_PAGE + MOV_HIST_PER_PAGE);
+  if(!Access.can('movements.read')||!movTablaBody) return;
+  filterDesde ??= document.getElementById('movHistDesde')?.value;
+  filterHasta ??= document.getElementById('movHistHasta')?.value;
+  filterItem ??= movHistItem?.value;
+  const request = ++movHistoryRequest,table=document.getElementById('movTabla');
+  table?.setAttribute('aria-busy','true');
+  try{
+  if(filterDesde&&filterHasta&&filterDesde>filterHasta)throw Error('La fecha Desde no puede ser posterior a Hasta.');
+  const filterKey=JSON.stringify([filterDesde||'',filterHasta||'',filterItem||'',movHistMostrarCompleto]);
+  if(filterKey!==movHistoryFilterKey){movHistoryFilterKey=filterKey;movHistPage=1;movHistoryCursors=[null];}
+  const [page,reversed]=await Promise.all([
+    Store.transferHistory({desde:filterDesde,hasta:filterHasta,item:filterItem,before:movHistoryCursors[movHistPage-1],days:MOV_HIST_PER_PAGE,complete:movHistMostrarCompleto}),
+    Store.transferReversals()
+  ]);
+  if(request!==movHistoryRequest)return;
+  const pageItems=buildGroupedTransfers(normalizeTransfers(page.rows));
+  movHistFilteredData=pageItems;movHistoryMore=page.more;
+  movHistoryCursors[movHistPage]=page.before;
+  if(!pageItems.length){movTablaBody.innerHTML='<tr><td colspan="6">No hay movimientos para los filtros seleccionados.</td></tr>';renderMovHistPagination();return;}
 
   movTablaBody.innerHTML = pageItems.map((group, idx) => {
     const detailRows = [...group.rows]
@@ -3027,7 +2469,7 @@ async function refreshMovimientosTable(filterDesde, filterHasta, filterItem) {
           <div class="mov-col-item">${escapeHtml(row.item)}</div>
           <div class="mov-col-name">${escapeHtml(row.nombre)}</div>
           <div class="mov-col-qty">${row.cantidad}</div>
-          <button type="button" class="btn-delete-mov-line" data-group-index="${idx}" data-mov-id="${row.id}" title="Eliminar esta línea y revertir stock" hidden>Eliminar</button>
+          <button type="button" class="btn-delete-mov-line" data-group-index="${idx}" data-mov-id="${row.id}" title="Revertir conservando el registro original" ${row.cantidad<=0 || reversed.has(String(row.id)) ? 'disabled' : ''} hidden>${reversed.has(String(row.id)) ? 'Revertido' : row.cantidad<=0 ? 'Reversión' : 'Revertir'}</button>
         </div>
       `).join('');
     return `
@@ -3046,7 +2488,7 @@ async function refreshMovimientosTable(filterDesde, filterHasta, filterItem) {
             <summary>Ver detalle del dia (${group.rows.length})</summary>
             <div class="mov-group-detail" data-group-index="${idx}">
               <div class="mov-group-toolbar">
-                <button type="button" class="secondary btn-mov-edit" data-group-index="${idx}">Editar</button>
+                <button type="button" class="secondary btn-mov-edit" data-group-index="${idx}">Revertir productos</button>
                 <button type="button" class="btn-mov-done" data-group-index="${idx}" hidden>Listo</button>
               </div>
               <div class="mov-detail-head">
@@ -3075,7 +2517,9 @@ async function refreshMovimientosTable(filterDesde, filterHasta, filterItem) {
   }
 
   movTablaBody.querySelectorAll('.btn-mov-edit').forEach(btn => {
+    btn.hidden=!Access.can('movements.reverse');
     btn.addEventListener('click', (ev) => {
+      if(!Access.can('movements.reverse'))return;
       const idx = ev.currentTarget.dataset.groupIndex;
       setGroupEditMode(idx, true);
     });
@@ -3097,6 +2541,12 @@ async function refreshMovimientosTable(filterDesde, filterHasta, filterItem) {
   });
 
   renderMovHistPagination();
+  }catch(e){
+    if(request!==movHistoryRequest)return;
+    movTablaBody.innerHTML=`<tr><td colspan="6">${escapeHtml(e.message)}</td></tr>`;
+    const pagination=document.getElementById('movHistPagination');if(pagination)pagination.innerHTML='';
+    Store.notice('No se pudo cargar el historial de movimientos. '+e.message,true);
+  }finally{if(request===movHistoryRequest)table?.removeAttribute('aria-busy');}
 }
 
 function renderMovHistPagination() {
@@ -3107,29 +2557,9 @@ function renderMovHistPagination() {
     pag.innerHTML = totalAll > 0 ? `<span class="mov-page-info">Mostrando historial completo: ${totalAll} dia${totalAll !== 1 ? 's' : ''} con movimientos</span>` : '';
     return;
   }
-  const total = movHistFilteredData.length;
-  const totalPages = Math.max(1, Math.ceil(total / MOV_HIST_PER_PAGE));
-
-  if (totalPages <= 1) { pag.innerHTML = total > 0 ? `<span class="mov-page-info">${total} dia${total !== 1 ? 's' : ''} con movimientos</span>` : ''; return; }
-
-  let html = `<button type="button" class="mov-page-prev" ${movHistPage <= 1 ? 'disabled' : ''}>← Anterior</button>`;
-  const maxBtns = 5;
-  let startP = Math.max(1, movHistPage - Math.floor(maxBtns / 2));
-  let endP = Math.min(totalPages, startP + maxBtns - 1);
-  if (endP - startP < maxBtns - 1) startP = Math.max(1, endP - maxBtns + 1);
-
-  for (let i = startP; i <= endP; i++) {
-    html += `<button type="button" class="mov-page-btn ${i === movHistPage ? 'active' : ''}" data-page="${i}">${i}</button>`;
-  }
-  html += `<button type="button" class="mov-page-next" ${movHistPage >= totalPages ? 'disabled' : ''}>Siguiente →</button>`;
-  html += `<span class="mov-page-info">${total} dia${total !== 1 ? 's' : ''} con movimientos</span>`;
-  pag.innerHTML = html;
-
-  pag.querySelector('.mov-page-prev')?.addEventListener('click', () => { movHistPage--; refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value, movHistItem?.value); });
-  pag.querySelector('.mov-page-next')?.addEventListener('click', () => { movHistPage++; refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value, movHistItem?.value); });
-  pag.querySelectorAll('.mov-page-btn').forEach(btn => {
-    btn.addEventListener('click', () => { movHistPage = parseInt(btn.dataset.page); refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value, movHistItem?.value); });
-  });
+  pag.innerHTML=`<button type="button" class="mov-page-prev" ${movHistPage<=1?'disabled':''}>← Anterior</button><span class="mov-page-info">Página ${movHistPage} · ${movHistFilteredData.length} días con movimientos</span><button type="button" class="mov-page-next" ${movHistoryMore?'':'disabled'}>Siguiente →</button>`;
+  pag.querySelector('.mov-page-prev').addEventListener('click',()=>{movHistPage--;void refreshMovimientosTable();});
+  pag.querySelector('.mov-page-next').addEventListener('click',()=>{movHistPage++;void refreshMovimientosTable();});
 }
 
 // Tabs for movimientos
@@ -3146,7 +2576,7 @@ function initMovTabs() {
       if (tab.dataset.movView === 'movHistView') {
         movHistPage = 1;
         refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value, movHistItem?.value);
-      }
+      } else { void Store.refresh([refreshMovDatalist,refreshRecentMovimientos]); }
     });
   });
   // Historial filter buttons
@@ -3188,89 +2618,43 @@ function initMovTabs() {
 }
 
 async function deleteMovimientoLinea(movId) {
-  if (!confirm('¿Eliminar esta línea del movimiento? Se revertirá el stock (CEJA - cantidad, SENKATA + cantidad).')) return;
-  try {
-    const { data: mov, error } = await supabase.from('movements').select('*').eq('id', movId).maybeSingle();
-    if (error || !mov) { alert('No se encontró la línea del movimiento.'); return; }
-    if (mov.tipo !== 'transfer') { alert('Solo se pueden editar líneas de tipo transferencia.'); return; }
-
-    const qty = Number(mov.cantidad || 0);
-    if (qty > 0 && mov.item) {
-      const p = await findProductByITEM(mov.item);
-      if (!p) { alert('No se encontró el producto asociado para revertir stock.'); return; }
-      if ((p.ceja || 0) < qty) {
-        alert(`No se puede eliminar: CEJA actual (${p.ceja || 0}) es menor que la cantidad a revertir (${qty}).`);
-        return;
-      }
-      const rev = await applyStockDeltaAtomicById(p.id, -qty, qty, { minCeja: 0, minSenkata: 0 });
-      if (!rev.ok) {
-        alert('No se pudo revertir stock de forma segura. Intente nuevamente.');
-        return;
-      }
-    }
-
-    const { error: delErr } = await supabase.from('movements').delete().eq('id', movId);
-    if (delErr) { console.error('delete movement line error', delErr); alert('No se pudo eliminar la línea.'); return; }
-
-    await refreshInventoryUI();
-    await refreshMovimientosTable(document.getElementById('movHistDesde')?.value, document.getElementById('movHistHasta')?.value, movHistItem?.value);
-    await refreshDashboard();
-    await refreshMovDatalist();
-    alert('Línea del movimiento eliminada correctamente.');
-  } catch (e) {
-    console.error('deleteMovimientoLinea error', e);
-    alert('Ocurrió un error al eliminar la línea del movimiento.');
-  }
+  return Store.run('reverse-'+movId,null,async()=>{
+    const reason=await Experience.requestReason('Revertir movimiento #'+movId,'Se devolverán las unidades a SENKATA y se conservará el movimiento original. La reversión quedará registrada con tu cuenta.');
+    if(reason===null)return;
+    await Store.commit('transfer_reverse',{reason,movement_id:Number(movId)},'reverse-'+movId);
+    Store.notice('Transferencia revertida. El registro original se conserva.');
+    refreshAfterWrite();
+  });
 }
-
-formMov?.addEventListener('submit', async (e) => {
+formMov?.addEventListener('submit',e=>{
   e.preventDefault();
-  const fecha = movFecha.value;
-  if (!fecha) { alert('Seleccione la fecha'); return; }
-  const rows = Array.from(movItemsTbody?.querySelectorAll('tr') || []);
-  if (!rows.length) { alert('Agregue al menos una línea'); return; }
-  const batchId = createMovementBatchId();
-  let processed = 0;
-  for (const tr of rows) {
-    const item = tr.dataset.item || (tr.querySelector('.mov-item')?.value || '').trim();
-    const cant = parseInt(tr.querySelector('.mov-cant')?.value || '0', 10);
-    if (!item || cant <= 0) continue;
-    const p = await findProductByITEM(item);
-    if (!p) { alert(`Producto no encontrado: ${item}`); continue; }
-    if ((p.senkata || 0) < cant) { alert(`SENKATA insuficiente para ${p.item} (${p.nombre}). Disp: ${p.senkata}`); continue; }
-    const trRes = await applyStockDeltaAtomicById(p.id, cant, -cant, { minCeja: 0, minSenkata: 0 });
-    if (!trRes.ok) { alert(`No se pudo mover stock para ${p.item}.`); continue; }
-    await addMovement({ tipo: 'transfer', fecha, item: p.item, nombre: p.nombre, cantidad: cant, detalle: `SENKATA → CEJA [MOV:${batchId}]`, total: 0, descuento: 0 });
-    processed++;
-  }
-  await refreshInventoryUI();
-  await refreshMovimientosTable();
-  if (processed > 0) {
-    alert(`Movimiento registrado: ${batchId} (${processed} líneas)`);
-    movItemsTbody.innerHTML = '';
-    movItemsTbody.appendChild(newMovRow());
-    renumberMovRows();
-  } else {
-    alert('No se registró ningún movimiento.');
-  }
+  Store.run('transfer',formMov.querySelector('[type=submit]'),async()=>{
+    const products=await productsFor([...movItemsTbody.querySelectorAll('tr')].map(tr=>tr.dataset.item||tr.querySelector('.mov-item').value));
+    const items=[...movItemsTbody.querySelectorAll('tr')].map(tr=>{
+      const item=tr.dataset.item||tr.querySelector('.mov-item').value.trim();
+      const p=resolveProductFromList(products,item);
+      if(!p) throw new Error('Seleccione un producto válido: '+item);
+      return {product_id:p.id,cantidad:Store.number(tr.querySelector('.mov-cant').value,'Cantidad',{integer:true,min:1})};
+    });
+    if(!movFecha.value||!items.length) throw new Error('Complete fecha y productos.');
+    await Store.commit('transfer',{fecha:movFecha.value,items});
+    movItemsTbody.replaceChildren(newMovRow()); renumberMovRows(); Store.notice('Transferencia completa guardada.');
+    refreshAfterWrite();
+  });
 });
 
-movLimpiar?.addEventListener('click', () => { formMov.reset(); if (movItemsTbody){ movItemsTbody.innerHTML=''; movItemsTbody.appendChild(newMovRow()); renumberMovRows(); } });
+
+movLimpiar?.addEventListener('click', () => { formMov.reset(); movFecha.value=Store.date(); if (movItemsTbody){ movItemsTbody.innerHTML=''; movItemsTbody.appendChild(newMovRow()); renumberMovRows(); } });
 
 // Inicialización
 (async () => {
-  initDollarPrediction();
-  initProductsRealtime();
-  initInventoryAutoRefresh();
-  await refreshInventoryUI();
-  await renderAdminMatrix();
-  await refreshDashboard();
-  await refreshMovDatalist();
-  await refreshMovimientosTable();
-  await refreshVentasHistorial();
+
+  if(Access.can('inventory.read')) initProductsRealtime();
+  if(Access.can('inventory.read')) initInventoryAutoRefresh();
   initAdminSettingsUI();
-  populateBulkCategories();
+
   initMovTabs();
+  Access.apply();
   if (movItemsTbody && movItemsTbody.children.length === 0) {
     movItemsTbody.appendChild(newMovRow());
     renumberMovRows();
@@ -3281,9 +2665,14 @@ movLimpiar?.addEventListener('click', () => { formMov.reset(); if (movItemsTbody
   });
   updateHomeClock();
   setInterval(updateHomeClock, 1000);
-  await refreshHomeWeather();
+  void refreshHomeWeather();
   setInterval(refreshHomeWeather, 10 * 60 * 1000);
-  await refreshFxWidget();
+  void refreshFxWidget();
   setInterval(refreshFxWidget, 30000);
-})();
+})().catch(e=>Store.notice(e.message,true));
 
+for(const id of ['ingFecha','venFecha','movFecha']){const el=document.getElementById(id);if(el&&!el.value)el.value=Store.date();}
+window.addEventListener('unhandledrejection',e=>{console.error(e.reason);Store.notice(e.reason?.message||'No se pudo cargar la información. Intente nuevamente.',true);});
+
+// Advertir sobre cambios que todavía no se guardaron.
+window.addEventListener('beforeunload',e=>{if(Access.can(null) && (Store.busy.size || Store.hasPending() || countInventoryChanges()>0)){e.preventDefault();e.returnValue='';}});

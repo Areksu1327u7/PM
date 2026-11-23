@@ -1,23 +1,33 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-access="public">
 <head>
   <meta charset="UTF-8">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https: wss://tgggakuinkbibqvvuvob.supabase.co; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Importaciones MB</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=20261121d" />
+  <link rel="stylesheet" href="interface.css?v=20261121d" />
   <!-- Chart.js CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script defer src="vendor/chart.umd.js"></script>
 </head>
 <body>
+  <section id="publicView" class="public-view">
+    <header class="public-heading"><a class="public-brand" href="#publicView"><span class="brand-symbol">MB</span><span>IMPORTACIONES MB<small>Productos para tu día a día</small></span></a><button class="public-login-link" id="publicLogin" type="button" aria-haspopup="dialog" aria-controls="authDialog">Iniciar sesión</button></header>
+    <div class="public-layout"><main class="storefront"><div class="public-hero"><div><p class="eyebrow">DESCUBRE NUESTRA SELECCIÓN</p><h1>Lo que buscas.<br><em>Más cerca de ti.</em></h1><p>Explora nuestros productos destacados y encuentra tu próximo favorito.</p><a class="catalog-cta" href="#publicProducts">Explorar productos <span aria-hidden="true">↓</span></a></div><div class="hero-detail" aria-hidden="true"><span>MB</span><p>Descubre · Elige · Encuentra</p></div></div>
+    <section class="featured-section" aria-labelledby="featuredTitle"><div class="catalog-heading"><div><p class="eyebrow">SELECCIÓN DESTACADA</p><h2 id="featuredTitle">Los favoritos de nuestra tienda</h2></div><div class="carousel-controls"><button id="catalogPrev" type="button" class="secondary" aria-label="Producto anterior">←</button><span id="catalogPosition" aria-live="polite"></span><button id="catalogNext" type="button" class="secondary" aria-label="Producto siguiente">→</button></div></div><p id="catalogStatus" class="note">Cargando catálogo…</p><div id="featuredProducts" class="featured-track" role="region" aria-roledescription="carrusel" aria-label="Productos destacados" tabindex="0"></div></section>
+    <div class="catalog-heading"><div><p class="eyebrow">EXPLORA EL CATÁLOGO</p><h2>Encuentra tu favorito</h2></div><span class="catalog-tag">Selección de productos</span></div><div id="publicProducts" class="public-products"></div><footer class="public-footer">Importaciones MB · Consulta disponibilidad en tienda.</footer></main></div><dialog id="authDialog" class="auth-dialog" aria-labelledby="authTitle" hidden><div class="auth-card"><button id="authClose" class="auth-close secondary" type="button" aria-label="Cerrar inicio de sesión">✕</button><div class="auth-card-heading"><span class="eyebrow">ÁREA PRIVADA</span><h2 id="authTitle">Iniciar sesión</h2></div><div id="quickPanel" class="quick-panel" hidden><div id="quickPick"><p class="note quick-lead">Toque su nombre para ingresar con su código.</p><div id="quickAccounts" class="quick-accounts"></div><button id="quickUsePassword" type="button" class="secondary quick-link">Ingresar con correo y contraseña</button></div><form id="quickPinForm" class="quick-pin-form" hidden autocomplete="off" novalidate><button id="quickBack" type="button" class="secondary quick-link">← Elegir otra persona</button><div class="quick-who"><span id="quickAvatar" class="quick-avatar" aria-hidden="true"></span><strong id="quickName"></strong></div><label for="quickPin" class="quick-label">Escriba su código de 4 números</label><input id="quickPin" class="quick-pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off" aria-describedby="quickPinStatus"><div class="quick-keypad"><button type="button" class="quick-key" data-key="1">1</button><button type="button" class="quick-key" data-key="2">2</button><button type="button" class="quick-key" data-key="3">3</button><button type="button" class="quick-key" data-key="4">4</button><button type="button" class="quick-key" data-key="5">5</button><button type="button" class="quick-key" data-key="6">6</button><button type="button" class="quick-key" data-key="7">7</button><button type="button" class="quick-key" data-key="8">8</button><button type="button" class="quick-key" data-key="9">9</button><button type="button" class="quick-key quick-key-text" data-key="clear">Borrar todo</button><button type="button" class="quick-key" data-key="0">0</button><button type="button" class="quick-key" data-key="del" aria-label="Borrar último número">⌫</button></div><p id="quickPinStatus" class="quick-status" role="status" aria-live="polite"></p></form></div><button id="quickBackToList" type="button" class="secondary quick-link" hidden>← Volver a la lista de este equipo</button><form id="authForm"><label>Correo electrónico<input id="authEmail" type="email" autocomplete="username" required></label><label>Contraseña<input id="authPassword" type="password" autocomplete="current-password" minlength="12" required></label><button id="authLogin" type="submit" class="primary">Iniciar sesión</button><div class="actions"><button id="authRegister" type="button" class="secondary">Solicitar cuenta</button><button id="authReset" type="button" class="secondary">Recuperar acceso</button></div></form><form id="authNewPasswordForm" hidden><label>Nueva contraseña (mínimo 12 caracteres)<input id="authNewPassword" type="password" autocomplete="new-password" minlength="12" required></label><button id="authSavePassword" type="submit">Guardar nueva contraseña</button></form><p id="authStatus" role="status" aria-live="polite">Verificando sesión…</p><button id="authLogoutPublic" type="button" hidden>Cerrar sesión</button><p class="note">Las cuentas nuevas requieren autorización del administrador.</p></div></dialog>
+  </section>
   <header class="app-header">
     <div class="header-row">
       <h1>Importaciones MB</h1>
     </div>
+    <div class="session-box"><strong id="sessionAlias"></strong><span id="sessionEmail"></span><button id="authSwitch" type="button" class="secondary">Cambiar usuario</button><button id="authLogout" type="button" class="secondary">Cerrar sesión</button></div>
     <nav class="nav">
-      <button class="nav-btn" data-target="homeSection">Home</button>
+      <button class="nav-btn" data-target="homeSection">Inicio</button>
       <button class="nav-btn" data-target="ingresoSection">Ingreso de Productos</button>
       <button class="nav-btn" data-target="movSection">Movimientos (Senkata → Ceja)</button>
       <button class="nav-btn" data-target="realizarVentaSection">Realizar Venta</button>
@@ -26,11 +36,14 @@
       <button class="nav-btn" data-target="inventarioSection">Inventario</button>
       <button class="nav-btn" data-target="dashboardSection">Dashboard</button>
       <button class="nav-btn nav-btn-highlight" data-target="predictionSection">Predecir Dólar (Beta)</button>
-      <button class="nav-btn" data-target="adminSection">Administrador</button>
+      <button class="nav-btn" data-target="adminSection">Configuración</button>
+      <button class="nav-btn" data-target="profileSection">Mi perfil</button>
     </nav>
   </header>
 
   <main class="container">
+    <div id="connectionStatus" class="connection-status" role="status">Comprobando conexión…</div>
+    <div id="pendingOperations" class="pending-operations" hidden><strong>Hay una operación sin confirmar.</strong> Mantenga esta pestaña abierta y reinténtela para conocer el resultado sin duplicarla. <button type="button" id="retryPending">Reintentar operación pendiente</button></div>
     <section id="homeSection" class="page-section">
       <div class="home-hero card">
         <div>
@@ -231,15 +244,15 @@
           <button type="button" class="secondary" id="ingAddItem">Agregar línea</button>
           <hr />
           <div class="grid-3">
-            <label>Subir CSV (ITEM,Nombre,CEJA,SENKATA,Unidad,Precio[,Categoria])
+            <label>Importar catálogo CSV (ITEM,Nombre,CEJA,SENKATA,Unidad,Precio[,Categoria])
               <input type="file" id="csvFile" accept=".csv,text/csv" />
             </label>
             <div>
               <button type="button" id="csvPreviewBtn" class="secondary">Previsualizar CSV</button>
-              <button type="button" id="csvUploadBtn" class="primary">Subir a Base de Datos</button>
+              <button type="button" id="csvUploadBtn" class="primary">Importar catálogo</button>
             </div>
             <div>
-              <small class="note">Si falta "Categoria" se usa "General". Unidad por defecto: PCS.</small>
+              <small class="note">Productos existentes: se actualiza catálogo y precio, conservando el stock. Productos nuevos: se toma el saldo del CSV. Para sumar unidades use Guardar ingreso.</small>
             </div>
           </div>
           <div class="table-wrap card" id="csvPreview" hidden>
@@ -329,7 +342,7 @@
       <form id="formCotizacion" class="card" novalidate>
         <div class="cot-head">
           <span id="cotModo" class="badge badge-ok">Nueva cotización</span>
-          <span class="note">Las cotizaciones se guardan en este navegador y se eliminan automáticamente a los 3 días.</span>
+          <span class="note">Las cotizaciones se guardan en este navegador. Vencen a los 3 días y se conservan para consulta.</span>
         </div>
         <fieldset>
           <legend>Datos de la cotización</legend>
@@ -374,6 +387,8 @@
         </fieldset>
         <div class="actions">
           <button type="submit" id="cotGuardar" class="primary">Guardar cotización</button>
+          <button type="button" id="cotImprimir" class="secondary">Imprimir cotización</button>
+          <button type="button" id="cotPDF" class="secondary">Descargar PDF</button>
           <button type="button" id="cotConvertir" class="secondary">Convertir en venta</button>
           <button type="button" id="cotNueva">Nueva cotización</button>
         </div>
@@ -382,7 +397,7 @@
       <div class="card">
         <div class="cot-head">
           <h3>Historial de cotizaciones</h3>
-          <span class="note">Se conservan máximo 3 días</span>
+          <span class="note">Vigencia: 3 días · historial conservado</span>
         </div>
         <div class="table-wrap">
           <table class="table" id="cotHistTabla">
@@ -450,12 +465,13 @@
           </table>
         </div>
         <div class="actions" style="justify-content:flex-end">
+          <div id="ventasHistPagination" class="history-pagination" aria-label="Páginas del historial de ventas"></div>
           <div id="ventasTotalFooter" class="note"><strong>Total ventas (sin anuladas):</strong> Bs 0.00</div>
         </div>
       </div>
     </section>
 
-    
+
 
     <!-- Inventario con filtros -->
     <section id="inventarioSection" class="page-section" hidden>
@@ -494,7 +510,7 @@
 
         <div id="invEditBanner" class="inv-edit-banner">
           <span class="banner-icon">✏️</span>
-          <span>Modo Edición activado — edita directamente las celdas de la tabla</span>
+          <span>Editar inventario activado — edita directamente las celdas de la tabla</span>
           <span class="banner-hint">Los cambios se resaltan en amarillo</span>
         </div>
 
@@ -532,77 +548,30 @@
 
     <!-- Dashboard con gráficos -->
     <section id="dashboardSection" class="page-section" hidden>
-      <h2>Dashboard</h2>
-      <!-- KPI tiles -->
-      <div class="grid-5" id="kpiGrid">
-        <div class="card kpi-card"><div class="kpi-title">Productos</div><div class="kpi-value" id="kpiTotalProductos">0</div></div>
-        <div class="card kpi-card"><div class="kpi-title">Stock Total</div><div class="kpi-value" id="kpiStockTotal">0</div></div>
-        <div class="card kpi-card"><div class="kpi-title">Valor Inventario</div><div class="kpi-value" id="kpiValorInventario">Bs 0.00</div></div>
-        <div class="card kpi-card"><div class="kpi-title">Ventas (Hoy)</div><div class="kpi-value" id="kpiVentasHoy">Bs 0.00</div></div>
-        <div class="card kpi-card"><div class="kpi-title">Ingresos (Hoy)</div><div class="kpi-value" id="kpiIngresosHoy">Bs 0.00</div></div>
+      <div class="dashboard-heading"><div><p class="eyebrow">RESUMEN DEL NEGOCIO</p><h2>Tu tienda, en perspectiva</h2><p class="section-description">Ventas, existencias y reposición en un solo lugar.</p></div><button type="button" class="secondary" id="dashRefresh">↻ Actualizar panel</button></div>
+      <div class="dashboard-toolbar"><div class="period-control" role="group" aria-label="Período de ventas"><button type="button" data-dash-days="7" aria-pressed="false">7 días</button><button type="button" data-dash-days="30" aria-pressed="true">30 días</button><button type="button" data-dash-days="90" aria-pressed="false">90 días</button></div><span id="dashRange" class="note"></span><span id="dashUpdated" class="note">Cargando datos…</span></div>
+      <p id="dashError" class="dashboard-error" role="alert" hidden></p>
+      <div class="dashboard-metrics" id="kpiGrid">
+        <article class="card metric-card metric-featured"><span class="metric-label">Ventas netas del período</span><strong class="metric-value" id="dashSalesTotal">—</strong><span id="dashChange" class="metric-note">Comparando períodos…</span></article>
+        <article class="card metric-card"><span class="metric-label">Venta promedio</span><strong class="metric-value" id="dashTicket">—</strong><span id="dashSaleCount" class="metric-note">Ventas vigentes del período</span></article>
+        <article class="card metric-card"><span class="metric-label">Unidades disponibles</span><strong class="metric-value" id="kpiStockTotal">—</strong><span class="metric-note">Stock actual · CEJA + SENKATA</span></article>
+        <article class="card metric-card"><span class="metric-label">Productos sin stock en CEJA</span><strong class="metric-value" id="dashCritical">—</strong><span class="metric-note">Revise existencias para reponer</span></article>
       </div>
-
-      <div class="grid-3">
-        <div class="card">
-          <h3>Stock por Categoría</h3>
-          <canvas id="chartStockPorCategoria"></canvas>
-        </div>
-        <div class="card">
-          <h3>Ingresos vs Ventas (por día)</h3>
-          <canvas id="chartMovimientos"></canvas>
-        </div>
-        <div class="card">
-          <h3>Top Productos por Stock</h3>
-          <canvas id="chartTopProductos"></canvas>
-        </div>
+      <div class="dashboard-facts"><div><span>Productos en catálogo</span><strong id="kpiTotalProductos">—</strong></div><div><span>Inventario a precio de venta</span><strong id="kpiValorInventario">—</strong></div><div><span>Ventas de hoy</span><strong id="kpiVentasHoy">—</strong></div><div><span>Mercadería recibida hoy · costo</span><strong id="kpiIngresosHoy">—</strong></div></div>
+      <div class="dashboard-main-grid">
+        <article class="card chart-card "><div class="chart-heading"><h3>Actividad del negocio</h3><p>Ventas netas e ingresos de mercadería al costo, por día. No representa utilidad.</p></div><div class="chart-frame"><canvas id="chartMovimientos"></canvas></div></article>
+        <article class="card chart-card "><div class="chart-heading"><h3>Distribución del stock</h3><p>Unidades actuales por categoría.</p></div><div class="chart-frame"><canvas id="chartStockPorCategoria"></canvas></div></article>
       </div>
-
-      <div class="grid-3">
-        <div class="card">
-          <h3>Valor de Inventario por Categoría</h3>
-          <canvas id="chartValorInventarioPorCategoria"></canvas>
-        </div>
-        <div class="card">
-          <h3>CEJA vs SENKATA por Categoría</h3>
-          <canvas id="chartDepositosPorCategoria"></canvas>
-        </div>
-        <div class="card" id="cardDescuentoPorDia">
-          <h3>Descuento Promedio por Día</h3>
-          <canvas id="chartDescuentoPorDia"></canvas>
-        </div>
+      <div class="dashboard-grid">
+        <article class="card chart-card "><div class="chart-heading"><h3>Productos con más existencias</h3><p>Los 8 productos con mayor stock actual.</p></div><div class="chart-frame"><canvas id="chartTopProductos"></canvas></div></article>
+        <article class="card chart-card "><div class="chart-heading"><h3>Stock por depósito</h3><p>Compare las existencias actuales de CEJA y SENKATA.</p></div><div class="chart-frame"><canvas id="chartDepositosPorCategoria"></canvas></div></article>
       </div>
-
-      <div class="card" id="cardReabastecimiento">
-        <h3>Reabastecimiento Sugerido</h3>
-        <div class="legend">
-          <span class="badge badge-critical">Crítico ≤ 2 días</span>
-          <span class="badge badge-alert">Alerta ≤ 7 días</span>
-          <span class="badge badge-ok">Suficiente > 7 días</span>
-          <span class="note small">Cobertura objetivo: 14 días</span>
-        </div>
-        <div class="table-wrap">
-          <table class="table" id="reabastTabla">
-            <thead>
-              <tr>
-                <th>ITEM</th>
-                <th>Nombre</th>
-                <th>Stock</th>
-                <th>Ventas/día</th>
-                <th>Se agota en (días)</th>
-                <th>Sugerido (unidades)</th>
-                <th>Detalles</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <p class="note">Estimación basada en promedio de ventas de los últimos 30 días.</p>
-      </div>
-
-      <div class="card">
-        <h3>Ventas Acumuladas (últimos 30 días)</h3>
-        <canvas id="chartVentasAcumuladas"></canvas>
-      </div>
+      <article class="card" id="cardReabastecimiento"><div class="chart-heading"><p class="eyebrow">PLANIFICACIÓN</p><h3>Productos que necesitan reposición</h3><p id="dashCoverage">Demanda de los últimos 30 días</p></div><div class="legend"><span class="badge badge-critical">Crítico ≤ 2 días</span><span class="badge badge-alert">Alerta ≤ 7 días</span></div><div class="table-wrap"><table class="table" id="reabastTabla"><thead><tr><th>ITEM</th><th>Producto</th><th>Stock total</th><th>Ventas/día</th><th>Cobertura estimada</th><th>Unidades sugeridas</th><th>Detalles</th></tr></thead><tbody></tbody></table></div><p class="note small">Estimación sobre ambos depósitos; no genera compras ni movimientos de inventario.</p></article>
+      <details id="dashAdvanced" class="dashboard-details"><summary>Explorar más indicadores <span>Acumulados, valor del inventario y descuentos</span></summary><div class="dashboard-grid dashboard-advanced">
+        <article class="card chart-card "><div class="chart-heading"><h3>Ventas acumuladas</h3><p>Evolución del total vendido en el período.</p></div><div class="chart-frame"><canvas id="chartVentasAcumuladas"></canvas></div></article>
+        <article class="card chart-card "><div class="chart-heading"><h3>Valor del inventario</h3><p>Existencias actuales valorizadas a precio de venta.</p></div><div class="chart-frame"><canvas id="chartValorInventarioPorCategoria"></canvas></div></article>
+        <article class="card chart-card wide"><div class="chart-heading"><h3>Descuentos aplicados</h3><p>Porcentaje medio por venta de cada día.</p></div><div class="chart-frame"><canvas id="chartDescuentoPorDia"></canvas></div></article>
+      </div></details>
     </section>
 
     <!-- Predicción del dólar: oficial BCB y paralelo P2P -->
@@ -724,10 +693,12 @@
       </details>
     </section>
 
+    <section id="profileSection" class="page-section" hidden><h2>Mi perfil</h2><div class="card profile-card"><p class="eyebrow">TU IDENTIDAD EN EL EQUIPO</p><h3>Cómo quieres que te llamemos</h3><p class="note">Tu alias se muestra junto a tu cuenta. Tu correo y tus permisos no cambian.</p><form id="profileForm"><label>Alias<input id="profileAlias" type="text" minlength="2" maxlength="50" required autocomplete="nickname" placeholder="Ej.: Alex Flores"></label><button id="profileSave" class="primary" type="submit">Guardar alias</button><button id="profileRefresh" class="secondary" type="button">Actualizar perfil</button><p id="profileStatus" role="status"></p></form></div><div id="quickProfileCard" class="card profile-card" hidden><p class="eyebrow">INGRESO RÁPIDO</p><h3>Código de 4 números</h3><p class="note">Permite ingresar eligiendo su nombre y escribiendo su código en cualquier equipo donde ya haya ingresado con su contraseña. Tras 5 códigos incorrectos se desactiva y se pide la contraseña.</p><p id="quickProfileStatus" role="status"></p><div class="actions"><button id="quickProfileSet" class="primary" type="button">Crear código</button><button id="quickProfileRemove" class="secondary" type="button" hidden>Quitar de este equipo</button></div></div></section>
     <!-- Administrador: matriz de accesos y roles -->
     <section id="adminSection" class="page-section" hidden>
-      <h2>Administrador: Roles y Accesos</h2>
-      <div class="card">
+      <h2>Configuración y exportaciones</h2>
+      <div class="card" id="accessManagement" hidden>
+        <h3>Roles y permisos</h3><p class="note">El administrador principal conserva acceso completo. Los permisos se validan en Supabase. Consultar ventas incluye clientes; consultar movimientos incluye costos.</p>
         <div class="grid-3 admin-controls">
           <label>Nuevo rol
             <input type="text" id="adminNuevoRol" placeholder="Nombre del rol" />
@@ -741,9 +712,11 @@
             <tbody></tbody>
           </table>
         </div>
-        <p class="note">Nota: de momento esta página está abierta a todos; la matriz no restringe acceso aún, solo documenta roles/permisos.</p>
+        <p class="note">Los roles nuevos empiezan sin permisos. Para vender se requiere consultar inventario y ventas; para ver el dashboard se requiere consultar inventario, ventas y movimientos.</p>
       </div>
 
+      <div class="card" data-permission="access.manage"><h3>Solicitudes de acceso</h3><p class="note">Personas que pidieron una cuenta con «Solicitar cuenta» y todavía no tienen acceso, hayan confirmado su correo o no. Al aprobar, el correo queda confirmado aunque no les haya llegado el mensaje.</p><div class="table-wrap"><table class="table"><thead><tr><th>Correo</th><th>Solicitado</th><th>Estado del correo</th><th>Rol</th><th>Acción</th></tr></thead><tbody id="requestsBody"></tbody></table></div></div><div class="card" data-permission="access.manage"><h3>Crear cuenta</h3><p class="note">Crea la cuenta con el correo ya confirmado y acceso activo. Entregue el correo y la contraseña a la persona; al ingresar podrá crear su código de 4 números.</p><form id="accountCreateForm" class="grid-3 admin-controls" novalidate><label>Correo<input id="accountEmail" type="email" required autocomplete="off" placeholder="persona@correo.com"></label><label>Contraseña (mínimo 12 caracteres)<input id="accountPassword" type="text" minlength="12" maxlength="72" required autocomplete="new-password" spellcheck="false"></label><label>Rol<select id="accountRole" required></select></label><button id="accountGenerate" type="button" class="secondary">Generar contraseña</button><button id="accountCreate" type="submit" class="primary">Crear cuenta</button></form><p id="accountStatus" class="note" role="status"></p></div><div class="card" data-permission="access.manage"><h3>Usuarios</h3><p class="note">Cuentas aprobadas. Puede cambiar su rol, suspender el acceso o asignarles una contraseña nueva si la olvidaron.</p><button id="membersRefresh" type="button" class="secondary">Actualizar usuarios</button><div class="table-wrap"><table class="table"><thead><tr><th>Correo</th><th>Rol</th><th>Acceso activo</th><th>Acción</th></tr></thead><tbody id="membersBody"></tbody></table></div><button id="legacyExport" type="button" class="secondary">Descargar archivo local conservado</button></div>
+      <article id="reversalAuditCard" class="card" data-permission="access.manage" hidden><div class="catalog-heading"><div><p class="eyebrow">TRAZABILIDAD</p><h3>Anulaciones y reversiones</h3></div><button id="auditRefresh" class="secondary" type="button">Actualizar historial</button></div><p class="note">Fecha y hora de la operación en Bolivia. El alias y el correo corresponden al momento del registro. Se muestran operaciones realizadas desde esta actualización; no se inventan motivos de registros anteriores.</p><p id="auditStatus" role="status"></p><div class="table-wrap"><table class="table audit-table"><thead><tr><th>Fecha y hora</th><th>Operación</th><th>Productos y cantidades</th><th>Motivo</th><th>Cuenta responsable</th></tr></thead><tbody id="auditBody"></tbody></table></div><button id="auditMore" type="button" class="secondary" hidden>Ver más operaciones</button></article>
       <!-- Configuraciones generales -->
       <div class="card" id="adminConfigCard">
         <h3>Configuraciones Generales</h3>
@@ -754,10 +727,17 @@
           <label>Cobertura objetivo (días)
             <input type="number" id="cfgCoverageDays" min="1" step="1" placeholder="14" />
           </label>
+          <label>Ubicación del menú
+            <select id="cfgNavigation" aria-describedby="cfgNavigationHelp">
+              <option value="lateral">Lateral — a la izquierda</option>
+              <option value="horizontal">Horizontal — en la parte superior</option>
+            </select>
+          </label>
           <div class="actions" style="align-self:end">
             <button type="button" id="cfgGuardar" class="primary">Guardar Configuraciones</button>
           </div>
         </div>
+        <p class="note" id="cfgNavigationHelp">La ubicación del menú se aplica al guardar y se recuerda en este navegador. En pantallas pequeñas, el menú se muestra arriba para aprovechar el espacio.</p>
         <p class="note">El nombre de empresa se usa en el encabezado y comprobantes. La cobertura determina el cálculo de unidades sugeridas en reabastecimiento.</p>
       </div>
 
@@ -800,7 +780,7 @@
 
   <!-- Modal: Detalles de Venta -->
   <div id="ventaDetallesModal" class="modal-overlay" hidden>
-    <div class="modal-card">
+    <div class="modal-card" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
         <h3>Detalles de Venta</h3>
         <button type="button" class="modal-close" aria-label="Cerrar">✕</button>
@@ -819,12 +799,16 @@
     </div>
   </div>
 
-  <!-- Modal: Ventas por Producto -->
+  <!-- Modal: Historial por Producto -->
   <div id="productoVentasModal" class="modal-overlay" hidden>
-    <div class="modal-card">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="productoVentasTitulo">
       <div class="modal-header">
-        <h3 id="productoVentasTitulo">Ventas del producto</h3>
+        <h3 id="productoVentasTitulo">Historial del producto</h3>
         <button type="button" class="modal-close" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="mov-tabs" role="group" aria-label="Tipo de historial del producto">
+        <button type="button" id="productoHistVentas" class="mov-tab active" aria-pressed="true">Ventas</button>
+        <button type="button" id="productoHistMovimientos" class="mov-tab" aria-pressed="false">Movimientos</button>
       </div>
       <div id="productoVentasBody" class="modal-body"></div>
       <div class="modal-footer">
@@ -834,15 +818,14 @@
   </div>
 
   <!-- Supabase JS -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- jsPDF + AutoTable for PDF comprobantes -->
-  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.1/dist/jspdf.plugin.autotable.min.js"></script>
-  <!-- SheetJS for Excel export -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="modules/prediction.js"></script>
-  <script src="modules/prediction-ui.js"></script>
-  <script src="app.js"></script>
-  <script src="modules/cotizaciones.js"></script>
+  <script defer src="vendor/supabase.js"></script>
+  <script defer src="modules/prediction.js?v=20261121d"></script>
+  <script defer src="modules/prediction-ui.js?v=20261121d"></script>
+  <dialog id="operationReasonDialog" class="reason-dialog" aria-labelledby="reasonTitle"><form id="operationReasonForm"><p class="eyebrow">REGISTRO OBLIGATORIO</p><h2 id="reasonTitle">Motivo de la operación</h2><p id="reasonDescription" class="note"></p><label>Explica el motivo<textarea id="operationReason" minlength="5" maxlength="500" rows="4" required placeholder="Ej.: El cliente solicitó cancelar la compra."></textarea></label><p class="note">Entre 5 y 500 caracteres. Se registrará junto con tu cuenta y la fecha.</p><div class="actions"><button id="reasonCancel" type="button" class="secondary">Volver sin cambios</button><button type="submit" class="primary">Confirmar operación</button></div></form></dialog>
+  <dialog id="pinSetupDialog" class="reason-dialog" aria-labelledby="pinSetupTitle"><form id="pinSetupForm" novalidate><p class="eyebrow">INGRESO RÁPIDO</p><h2 id="pinSetupTitle">Crea tu código de 4 números</h2><p class="note">Elija los 4 números que prefiera. Servirá en este equipo y en cualquier otro donde haya ingresado al menos una vez con su contraseña.</p><label>Código<input id="pinSetupPin" class="quick-pin" type="password" inputmode="numeric" maxlength="4" autocomplete="off" required></label><label>Repita el código<input id="pinSetupConfirm" class="quick-pin" type="password" inputmode="numeric" maxlength="4" autocomplete="off" required></label><p id="pinSetupStatus" class="quick-status quick-error" role="status" aria-live="polite"></p><div class="actions"><button id="pinSetupSkip" type="button" class="secondary">Ahora no</button><button id="pinSetupSave" type="submit" class="primary">Guardar código</button></div></form></dialog>
+  <script defer src="modules/access.js?v=20261121d"></script>
+  <script defer src="modules/experience.js?v=20261121d"></script>
+  <script defer src="modules/quick-access.js?v=20261121d"></script>
+  <script defer src="modules/admin-users.js?v=20261121d"></script>
 </body>
 </html>

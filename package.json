@@ -1,0 +1,16 @@
+{
+  "name": "importaciones-mb",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "start": "node scripts/serve.cjs",
+    "db:apply": "node scripts/apply-migration.cjs",
+    "test:clone": "node scripts/verify-clone.cjs",
+    "test:security": "node scripts/verify-security.cjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
+    "jsdom": "26.1.0",
+    "pg": "^8.16.3"
+  }
+}
